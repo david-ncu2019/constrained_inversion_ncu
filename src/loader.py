@@ -6,7 +6,7 @@ Input format (standard, from my_input_data/):
   CSV_files/{STATION}_insar_mlcw.csv
       One file per MLCW station.
       Rows: Depth = 0, 10, 20, ..., 300 m (31 depths at 10 m intervals).
-      Columns: Depth, Month_0, Month_1, ..., Month_83.
+      Columns: Depth, Month_001, Month_002, ..., Month_083.
       Values: monthly INCREMENTAL displacement in mm (NOT cumulative).
       Depth = 0     → InSAR-derived surface deformation at that station.
       Depth = 10-290 → MLCW layer compaction of each 10 m layer (mm).
@@ -145,10 +145,10 @@ def find_valid_mlcw_depths(
         csv_path = csv_dir / f"{name}_insar_mlcw.csv"
         if not csv_path.exists():
             continue
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path).set_index("Depth")
         month_cols = [c for c in df.columns if c.startswith("Month_")]
-        for _, row in df.iterrows():
-            depth = int(row["Depth"])
+        for depth_val, row in df.iterrows():
+            depth = int(depth_val)
             if depth == 0:
                 continue
             if not row[month_cols].isna().all():
@@ -250,8 +250,35 @@ def build_real_dataset(
 
     # ── 2. Station coordinates → nearest output-grid pixel ───────────────
     stations = load_station_coords(coords_path, x_coords, y_coords)
-    n_stations = len(stations)
     station_names: list[str] = stations["Ename"].tolist()
+
+    # ── 2b. Exclude stations with insufficient InSAR temporal coverage ────
+    # Stations with < 50% valid InSAR months are excluded: boundary-clamping
+    # extrapolation for the missing epochs has no physical basis.
+    _min_insar_fraction = 0.50
+    _all_month_sample = pd.read_csv(
+        csv_dir / f"{station_names[0]}_insar_mlcw.csv", index_col=0
+    )
+    _n_total_months = len([c for c in _all_month_sample.columns if c.startswith("Month_")])
+
+    def _count_valid_insar(name: str) -> int:
+        p = csv_dir / f"{name}_insar_mlcw.csv"
+        if not p.exists():
+            return 0
+        _df = pd.read_csv(p, index_col=0)
+        _month_cols = [c for c in _df.columns if c.startswith("Month_")]
+        if 0 not in _df.index:
+            return 0
+        return int(_df.loc[0, _month_cols].notna().sum())
+
+    _valid_counts = {name: _count_valid_insar(name) for name in station_names}
+    _excluded = [n for n, c in _valid_counts.items()
+                 if c < _min_insar_fraction * _n_total_months]
+    if _excluded:
+        print(f"[loader] Excluding {len(_excluded)} stations with < 50% InSAR coverage: {_excluded}")
+    stations = stations[~stations["Ename"].isin(_excluded)].reset_index(drop=True)
+    station_names = stations["Ename"].tolist()
+    n_stations = len(stations)
 
     # ── 3. Valid MLCW depth levels ────────────────────────────────────────
     valid_depths = find_valid_mlcw_depths(csv_dir, station_names)
