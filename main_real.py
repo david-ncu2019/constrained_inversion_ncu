@@ -62,7 +62,11 @@ from pathlib import Path
 import numpy as np
 
 from src.loader import build_real_dataset
-from src.solvers_temporal import solve_independent_epochs, solve_joint_spacetime
+from src.solvers_temporal import (
+    solve_independent_epochs,
+    solve_joint_spacetime,
+    solve_joint_spacetime_cvxpy,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,7 +78,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lam-t", default=1.0, type=float)
     p.add_argument("--sigma-insar", default=3.0, type=float)
     p.add_argument("--sigma-well", default=1.0, type=float)
-    p.add_argument("--solver", choices=["joint", "independent"], default="joint")
+    p.add_argument(
+        "--solver",
+        choices=["joint", "independent", "cvxpy"],
+        default="cvxpy",
+        help=(
+            "'cvxpy' (default): CVXPY+OSQP with deep-residual inequality constraint "
+            "and geographic spatial smoother — requires cumulative space. "
+            "'joint': legacy lsq_linear joint solver (no inequality constraint). "
+            "'independent': legacy per-epoch lsq_linear solver."
+        ),
+    )
+    p.add_argument(
+        "--no-cumulate",
+        action="store_true",
+        default=False,
+        help="Disable cumulative conversion (use incremental monthly values). "
+             "Not recommended: the inequality constraint is unreliable in incremental space.",
+    )
     p.add_argument("--output-dir", default="output/", type=Path)
     return p.parse_args()
 
@@ -84,7 +105,9 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Load real data ────────────────────────────────────────────────────
+    cumulate = not args.no_cumulate
     print("Loading real data from:", args.data_dir)
+    print(f"  Displacement space: {'cumulative' if cumulate else 'incremental (monthly)'}")
     dataset, config, meta = build_real_dataset(
         data_dir=args.data_dir,
         month_start=args.month_start,
@@ -93,6 +116,7 @@ def main() -> None:
         lam_t=args.lam_t,
         sigma_insar=args.sigma_insar,
         sigma_well=args.sigma_well,
+        cumulate=cumulate,
     )
 
     n_stations = config.n_pixels   # = grid_rows * grid_cols = 31 for real data
@@ -107,7 +131,18 @@ def main() -> None:
     print(f"\nRunning {args.solver} inversion (lam={args.lam}, lam_t={args.lam_t}) …")
     t0 = time.perf_counter()
 
-    if args.solver == "joint":
+    if args.solver == "cvxpy":
+        if not cumulate:
+            print(
+                "  WARNING: cvxpy solver with --no-cumulate is not recommended. "
+                "The deep-residual inequality constraint is unreliable in incremental space."
+            )
+        m_flat = solve_joint_spacetime_cvxpy(
+            dataset,
+            x_twd97=meta["x_twd97"],
+            y_twd97=meta["y_twd97"],
+        )
+    elif args.solver == "joint":
         m_flat = solve_joint_spacetime(dataset)
     else:
         m_flat = solve_independent_epochs(dataset)
@@ -179,6 +214,7 @@ def main() -> None:
         full_grid_pixel_indices=np.array(meta["full_grid_pixel_indices"]),
         x_twd97=np.array(meta["x_twd97"]),
         y_twd97=np.array(meta["y_twd97"]),
+        cumulative_space=np.array(meta["cumulative_space"]),
     )
     print(f"\nResults saved to: {out_path}")
 

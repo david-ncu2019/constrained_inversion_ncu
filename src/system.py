@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.sparse import csr_array
+from scipy.spatial.distance import cdist
 
 from src.config import SystemConfig
 
@@ -113,3 +114,102 @@ def build_L_matrix(config: SystemConfig) -> csr_array:
         L.eliminate_zeros()
 
     return L
+
+
+def build_L_spatial(
+    config: SystemConfig,
+    x_twd97: np.ndarray,
+    y_twd97: np.ndarray,
+) -> csr_array:
+    """
+    Build a geographically meaningful spatial smoothness operator.
+
+    Connects station pairs within ``config.spatial_dist_threshold_m`` metres
+    using distance-weighted finite differences.  Each edge (i, j) contributes
+    one row per depth layer, penalising the difference between the model values
+    at the two stations for that layer.
+
+    This replaces the sequential ``build_L_matrix`` for the real-data path,
+    where stations are not ordered geographically.
+
+    Parameters
+    ----------
+    config : SystemConfig
+        Must have ``n_layers`` and ``total_voxels`` set correctly for the
+        real-data inversion (``n_pixels = n_stations``).
+    x_twd97 : np.ndarray, shape (n_stations,)
+        Easting coordinates in TWD97 metres.
+    y_twd97 : np.ndarray, shape (n_stations,)
+        Northing coordinates in TWD97 metres.
+
+    Returns
+    -------
+    csr_array, shape (n_edges * n_layers, total_voxels)
+        Row ``edge_idx * n_layers + l`` enforces similarity between layer ``l``
+        of station ``i`` and layer ``l`` of station ``j``, weighted by the
+        inverse distance between the two stations (normalised so the maximum
+        weight is 1).
+    """
+    n_stations = config.n_pixels
+    n_layers = config.n_layers
+    threshold = config.spatial_dist_threshold_m
+
+    coords = np.column_stack([x_twd97, y_twd97])           # (n_stations, 2)
+    dist_matrix = cdist(coords, coords, metric="euclidean")  # (n_stations, n_stations)
+
+    # Collect unique edges (i < j) within the distance threshold
+    rows_i, cols_j = np.where(
+        (dist_matrix > 0) & (dist_matrix <= threshold)
+    )
+    mask = rows_i < cols_j
+    edges_i = rows_i[mask]
+    edges_j = cols_j[mask]
+    n_edges = len(edges_i)
+
+    if n_edges == 0:
+        # No edges found — return a zero-row matrix so block_diagonal works
+        return csr_array((0, config.total_voxels), dtype=np.float64)
+
+    # Distance weights: inverse distance, normalised to [0, 1]
+    edge_dists = dist_matrix[edges_i, edges_j]
+    raw_weights = 1.0 / edge_dists
+    weights = raw_weights / raw_weights.max()
+
+    # Build COO arrays for all edges × all layers
+    n_rows = n_edges * n_layers
+    n_cols = config.total_voxels
+
+    # For edge k and layer l: row = k * n_layers + l
+    # col_pos = edges_i[k] * n_layers + l  → weight +w_k
+    # col_neg = edges_j[k] * n_layers + l  → weight -w_k
+    layer_idx = np.arange(n_layers, dtype=np.int32)
+
+    # Repeat each edge index for every layer
+    edge_rep = np.repeat(np.arange(n_edges, dtype=np.int32), n_layers)
+    layer_rep = np.tile(layer_idx, n_edges)
+    weight_rep = np.repeat(weights, n_layers)
+
+    row_idx = edge_rep * n_layers + layer_rep
+
+    col_pos = edges_i[edge_rep] * n_layers + layer_rep
+    col_neg = edges_j[edge_rep] * n_layers + layer_rep
+
+    # Interleave positive and negative entries
+    total_nnz = n_rows * 2
+    coo_row = np.empty(total_nnz, dtype=np.int32)
+    coo_col = np.empty(total_nnz, dtype=np.int32)
+    coo_data = np.empty(total_nnz, dtype=np.float64)
+
+    coo_row[0::2] = row_idx
+    coo_row[1::2] = row_idx
+    coo_col[0::2] = col_pos
+    coo_col[1::2] = col_neg
+    coo_data[0::2] = weight_rep
+    coo_data[1::2] = -weight_rep
+
+    from scipy.sparse import coo_array
+    L_spatial = coo_array(
+        (coo_data, (coo_row, coo_col)), shape=(n_rows, n_cols)
+    ).tocsr()
+    L_spatial.eliminate_zeros()
+    return L_spatial

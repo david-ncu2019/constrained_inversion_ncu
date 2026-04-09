@@ -54,6 +54,17 @@ class SystemConfig:
     # None (default) means every pixel has an InSAR observation (toy behaviour).
     insar_pixel_indices: tuple[int, ...] | None = None
 
+    # Geographic spatial smoother radius (metres).
+    # When > 0, build_L_spatial() connects station pairs within this distance
+    # using distance-weighted penalties.  Set to 0 to fall back to the
+    # sequential build_L_matrix() (toy/synthetic paths).
+    spatial_dist_threshold_m: float = 15000.0
+
+    # Flag indicating whether the dataset is in cumulative displacement space.
+    # Set by loader.build_real_dataset(cumulate=True).  Used for diagnostics
+    # and to select the correct temporal regularisation interpretation.
+    cumulative_space: bool = True
+
     @property
     def n_pixels(self) -> int:
         if self.grid_rows > 0 and self.grid_cols > 0:

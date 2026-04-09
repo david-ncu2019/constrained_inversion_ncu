@@ -189,6 +189,7 @@ def build_real_dataset(
     lam_t: float = 1.0,
     sigma_insar: float = 3.0,
     sigma_well: float = 1.0,
+    cumulate: bool = True,
 ) -> tuple[SyntheticDataset, SystemConfig, dict[str, Any]]:
     """
     Load real CRFP monitoring data into a SyntheticDataset for inversion.
@@ -220,6 +221,12 @@ def build_real_dataset(
         InSAR observation noise standard deviation (mm).
     sigma_well : float
         Well observation noise standard deviation (mm).
+    cumulate : bool
+        If True (default), convert incremental monthly values to cumulative
+        displacements from the reference date before inversion.  Cumulative
+        space is required to enforce the physical inequality constraint
+        Σ_l m_cum[t,s,l] ≤ InSAR_cum[t,s] reliably at every epoch.
+        Set to False only for diagnostic comparison with the incremental path.
 
     Returns
     -------
@@ -351,6 +358,16 @@ def build_real_dataset(
             row = s_idx * n_layers + l_idx
             w_matrix[row, :] = _interpolate_series(w_matrix[row, :])
 
+    # ── 7b. Cumulative conversion (optional) ─────────────────────────────
+    # Convert incremental monthly values to cumulative displacements from
+    # the reference date.  In cumulative space the inequality constraint
+    # Σ_l m_cum[t,s,l] ≤ InSAR_cum[t,s] is physically reliable at every
+    # epoch, avoiding spurious violations caused by measurement noise that
+    # occur when comparing incremental (monthly) values.
+    if cumulate:
+        d_insar_matrix = np.cumsum(d_insar_matrix, axis=1)
+        w_matrix = np.cumsum(w_matrix, axis=1)
+
     # ── 8. Sign convention and flatten ───────────────────────────────────
     # Real CRFP data convention: negative = subsidence (ground moves down).
     # Code convention: positive m means compaction (layer shortens, surface
@@ -388,6 +405,7 @@ def build_real_dataset(
         "month_labels": month_cols,
         "month_start": month_start,
         "month_end": month_end_idx,
+        "cumulative_space": cumulate,
     }
 
     return dataset, config, metadata
