@@ -38,7 +38,6 @@ Outputs
     loso_summary.txt           — plain-text summary
 """
 
-from __future__ import annotations
 
 import argparse
 import time
@@ -46,6 +45,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from typing import Optional, List, Dict, Any, Tuple
 
 from src.config import SyntheticDataset, SystemConfig
 from src.loader import build_real_dataset, parse_dataset_config
@@ -60,9 +60,9 @@ from src.solvers_temporal import solve_joint_spacetime_cvxpy
 def subset_dataset_exclude_station(
     full_dataset: SyntheticDataset,
     full_config: SystemConfig,
-    full_meta: dict,
+    full_meta: Dict[str, Any],
     exclude_idx: int,
-) -> tuple[SyntheticDataset, SystemConfig, dict]:
+) -> Tuple[SyntheticDataset, SystemConfig, Dict[str, Any]]:
     """
     Return a new (dataset, config, meta) with station ``exclude_idx`` removed.
 
@@ -158,7 +158,7 @@ def compute_depth_weights(
     n_epochs: int,
     n_stations: int,
     n_layers: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute depth_weights and insar_coverage from a solver output.
 
@@ -194,11 +194,11 @@ def compute_depth_weights(
 def run_loso_fold(
     full_dataset: SyntheticDataset,
     full_config: SystemConfig,
-    full_meta: dict,
+    full_meta: Dict[str, Any],
     full_depth_weights: np.ndarray,
     exclude_idx: int,
     n_gp_restarts: int = 10,
-) -> dict:
+) -> Dict[str, Any]:
     """
     Run one LOSO fold for station ``exclude_idx``.
 
@@ -250,7 +250,7 @@ def run_loso_fold(
     x_pred_km = np.array([full_meta["x_twd97"][exclude_idx]]) / 1000.0
     y_pred_km = np.array([full_meta["y_twd97"][exclude_idx]]) / 1000.0
 
-    mean_pred_2d, std_pred_2d = fit_gp_per_layer(
+    mean_pred_2d, std_pred_2d, _ = fit_gp_per_layer(
         depth_weights=depth_weights_sub,
         x_train_km=x_train_km,
         y_train_km=y_train_km,
@@ -280,9 +280,9 @@ def run_loso_fold(
 
 
 def compute_loso_metrics(
-    all_folds: list[dict],
-    valid_depths_m: list[int],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    all_folds: List[Dict[str, Any]],
+    valid_depths_m: List[int],
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Aggregate LOSO fold results into per-station and per-layer metric tables.
 
@@ -381,8 +381,8 @@ def main() -> None:
     n_stations = full_config.n_pixels
     n_layers = full_config.n_layers
     n_epochs = full_config.n_epochs
-    valid_depths_m: list[int] = full_meta["valid_depths_m"]
-    station_names: list[str] = full_meta["station_names"]
+    valid_depths_m: List[int] = full_meta["valid_depths_m"]
+    station_names: List[str] = full_meta["station_names"]
     print(f"  Stations: {n_stations}, Layers: {n_layers}, Epochs: {n_epochs}")
 
     # ── Load reference depth_weights from full-data inversion ─────────────

@@ -1,11 +1,11 @@
 import numpy as np
-from scipy.sparse import csr_array
+from scipy.sparse import csr_matrix
 from scipy.spatial.distance import cdist
 
 from src.config import SystemConfig
 
 
-def build_G_matrix(config: SystemConfig) -> csr_array:
+def build_G_matrix(config: SystemConfig) -> csr_matrix:
     """
     Build the InSAR forward operator G.
 
@@ -33,7 +33,7 @@ def build_G_matrix(config: SystemConfig) -> csr_array:
         data = np.full(nnz, config.delta_z, dtype=np.float64)
         indices = np.arange(nnz, dtype=np.int32)
         indptr = np.arange(0, nnz + 1, config.n_layers, dtype=np.int32)
-        return csr_array((data, indices, indptr), shape=(n_rows, n_cols))
+        return csr_matrix((data, indices, indptr), shape=(n_rows, n_cols))
 
     # Sparse path: build COO from the explicit pixel index list.
     pixel_arr = np.asarray(config.insar_pixel_indices, dtype=np.int32)
@@ -47,10 +47,10 @@ def build_G_matrix(config: SystemConfig) -> csr_array:
     )
     data = np.full(n_rows * config.n_layers, config.delta_z, dtype=np.float64)
 
-    return csr_array((data, (row_idx, col_idx)), shape=(n_rows, n_cols))
+    return csr_matrix((data, (row_idx, col_idx)), shape=(n_rows, n_cols))
 
 
-def build_I_wells(config: SystemConfig) -> csr_array:
+def build_I_wells(config: SystemConfig) -> csr_matrix:
     """
     Build the well selection matrix I_wells.
     Returns a sparse matrix of shape (n_well_obs, total_voxels).
@@ -73,10 +73,10 @@ def build_I_wells(config: SystemConfig) -> csr_array:
 
     indptr = np.arange(n_rows + 1, dtype=np.int32)
 
-    return csr_array((data, indices, indptr), shape=(n_rows, n_cols))
+    return csr_matrix((data, indices, indptr), shape=(n_rows, n_cols))
 
 
-def build_L_matrix(config: SystemConfig) -> csr_array:
+def build_L_matrix(config: SystemConfig) -> csr_matrix:
     """
     Build the first-order finite-difference operator L along the model vector.
     Returns a sparse matrix of shape (total_voxels - 1, total_voxels).
@@ -98,7 +98,7 @@ def build_L_matrix(config: SystemConfig) -> csr_array:
 
     indptr = np.arange(0, nnz + 1, 2, dtype=np.int32)
 
-    L = csr_array((data, indices, indptr), shape=(n_rows, n_cols))
+    L = csr_matrix((data, indices, indptr), shape=(n_rows, n_cols))
 
     # Zero out rows that cross pixel boundaries: row r connects voxel r to r+1.
     # When r = k*n_layers - 1 (last layer of pixel k), voxel r and r+1 belong
@@ -120,7 +120,7 @@ def build_L_spatial(
     config: SystemConfig,
     x_twd97: np.ndarray,
     y_twd97: np.ndarray,
-) -> csr_array:
+) -> csr_matrix:
     """
     Build a geographically meaningful spatial smoothness operator.
 
@@ -144,7 +144,7 @@ def build_L_spatial(
 
     Returns
     -------
-    csr_array, shape (n_edges * n_layers, total_voxels)
+    csr_matrix, shape (n_edges * n_layers, total_voxels)
         Row ``edge_idx * n_layers + l`` enforces similarity between layer ``l``
         of station ``i`` and layer ``l`` of station ``j``, weighted by the
         inverse distance between the two stations (normalised so the maximum
@@ -168,7 +168,7 @@ def build_L_spatial(
 
     if n_edges == 0:
         # No edges found — return a zero-row matrix so block_diagonal works
-        return csr_array((0, config.total_voxels), dtype=np.float64)
+        return csr_matrix((0, config.total_voxels), dtype=np.float64)
 
     # Distance weights: inverse distance, normalised to [0, 1]
     edge_dists = dist_matrix[edges_i, edges_j]
@@ -207,8 +207,8 @@ def build_L_spatial(
     coo_data[0::2] = weight_rep
     coo_data[1::2] = -weight_rep
 
-    from scipy.sparse import coo_array
-    L_spatial = coo_array(
+    from scipy.sparse import coo_matrix
+    L_spatial = coo_matrix(
         (coo_data, (coo_row, coo_col)), shape=(n_rows, n_cols)
     ).tocsr()
     L_spatial.eliminate_zeros()

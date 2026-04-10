@@ -32,13 +32,11 @@ Inversion grid:
   The output NetCDF grid geometry is preserved in the returned metadata dict.
 """
 
-from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, List, Dict, Tuple, Union
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 import xarray as xr
 
@@ -46,7 +44,7 @@ from src.config import SyntheticDataset, SystemConfig
 import configparser
 
 
-def parse_dataset_config(config_path: Path | str | None) -> dict[str, Any]:
+def parse_dataset_config(config_path: Optional[Union[Path, str]]) -> Dict[str, Any]:
     """Extract and cast [Dataset] parameters from pipeline_config.ini."""
     if not config_path: return {}
     p = Path(config_path)
@@ -84,7 +82,7 @@ def get_grid_specs(
     x_dim: str = "X",
     y_dim: str = "Y",
     depth_dim: str = "Depth",
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     """
     Read spatial metadata from the NetCDF output template.
 
@@ -103,7 +101,7 @@ def get_grid_specs(
         grid_cols : int — number of X grid points (117)
     """
     ds = xr.open_dataset(nc_path)
-    specs: dict[str, Any] = {
+    specs: Dict[str, Any] = {
         "x_coords": ds[x_dim].values.copy(),
         "y_coords": ds[y_dim].values.copy(),
         "depths": ds[depth_dim].values.copy(),
@@ -117,9 +115,9 @@ def get_grid_specs(
 def coord_to_pixel_index(
     x: float,
     y: float,
-    x_coords: npt.NDArray[np.float64],
-    y_coords: npt.NDArray[np.float64],
-) -> tuple[int, int, int]:
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+) -> Tuple[int, int, int]:
     """
     Map one TWD97 coordinate pair to the nearest grid pixel.
 
@@ -135,8 +133,8 @@ def coord_to_pixel_index(
 
 def load_station_coords(
     coords_path: Path,
-    x_coords: npt.NDArray[np.float64],
-    y_coords: npt.NDArray[np.float64],
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
     x_col: str = "X_TWD97",
     y_col: str = "Y_TWD97",
     name_col: str = "Ename",
@@ -167,11 +165,11 @@ def load_station_coords(
 
 def find_valid_mlcw_depths(
     csv_dir: Path,
-    station_names: list[str],
+    station_names: List[str],
     month_col_prefix: str = "Month_",
     csv_name_pattern: str = "{name}_insar_mlcw.csv",
     depth_col: str = "Depth",
-) -> list[int]:
+) -> List[int]:
     """
     Find depth levels (depth > 0) that have at least one non-NaN value
     across all stations and all months.  Depths that are entirely NaN
@@ -181,7 +179,7 @@ def find_valid_mlcw_depths(
     -------
     Sorted list of valid MLCW depth values (integers, in metres).
     """
-    valid: set[int] = set()
+    valid = set()
     for name in station_names:
         csv_path = csv_dir / csv_name_pattern.format(name=name)
         if not csv_path.exists():
@@ -197,7 +195,7 @@ def find_valid_mlcw_depths(
     return sorted(valid)
 
 
-def _interpolate_series(values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+def _interpolate_series(values: np.ndarray) -> np.ndarray:
     """
     Fill NaN gaps in a 1-D time series using linear interpolation.
 
@@ -223,9 +221,9 @@ def _interpolate_series(values: npt.NDArray[np.float64]) -> npt.NDArray[np.float
 
 
 def build_real_dataset(
-    data_dir: str | Path,
+    data_dir: Union[str, Path],
     month_start: int = 0,
-    month_end: int | None = None,
+    month_end: Optional[int] = None,
     lam: float = 1e-2,
     lam_t: float = 1.0,
     sigma_insar: float = 3.0,
@@ -245,7 +243,7 @@ def build_real_dataset(
     x_dim: str = "X",
     y_dim: str = "Y",
     nc_depth_dim: str = "Depth",
-) -> tuple[SyntheticDataset, SystemConfig, dict[str, Any]]:
+) -> Tuple[SyntheticDataset, SystemConfig, Dict[str, Any]]:
     """
     Load real CRFP monitoring data into a SyntheticDataset for inversion.
 
@@ -290,7 +288,7 @@ def build_real_dataset(
         m_true is set to zeros (ground truth unknown for real data).
     config : SystemConfig
         Configuration for the inversion.
-    metadata : dict
+    metadata : Dict[str, Any]
         Auxiliary information for output / visualisation:
             station_names            : list[str]
             x_twd97, y_twd97         : list[float]  TWD97 coordinates
@@ -307,12 +305,12 @@ def build_real_dataset(
 
     # ── 1. Spatial grid metadata from NetCDF template ────────────────────
     grid = get_grid_specs(nc_path, x_dim=x_dim, y_dim=y_dim, depth_dim=nc_depth_dim)
-    x_coords: npt.NDArray[np.float64] = grid["x_coords"]
-    y_coords: npt.NDArray[np.float64] = grid["y_coords"]
+    x_coords: np.ndarray = grid["x_coords"]
+    y_coords: np.ndarray = grid["y_coords"]
 
     # ── 2. Station coordinates → nearest output-grid pixel ───────────────
     stations = load_station_coords(coords_path, x_coords, y_coords, x_col=x_col, y_col=y_col, name_col=station_name_col)
-    station_names: list[str] = stations[station_name_col].tolist()
+    station_names: List[str] = stations[station_name_col].tolist()
 
     # ── 2b. Exclude stations with insufficient InSAR temporal coverage ────
     # Stations with < 50% valid InSAR months are excluded: boundary-clamping
@@ -450,7 +448,7 @@ def build_real_dataset(
         w=w_flat,
     )
 
-    metadata: dict[str, Any] = {
+    metadata: Dict[str, Any] = {
         "station_names": station_names,
         "x_twd97": stations[x_col].tolist(),
         "y_twd97": stations[y_col].tolist(),

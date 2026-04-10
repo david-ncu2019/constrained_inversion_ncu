@@ -53,11 +53,11 @@ Notes
   m >= 0 so the result is physically non-negative.
 """
 
-from __future__ import annotations
 
 import argparse
 import time
 from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple
 
 import numpy as np
 

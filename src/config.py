@@ -1,7 +1,6 @@
-from dataclasses import dataclass
-
 import numpy as np
-import numpy.typing as npt
+from typing import Optional, Tuple, List, Union, Any, Dict
+from dataclasses import dataclass
 
 
 @dataclass
@@ -10,7 +9,7 @@ class SystemConfig:
 
     grid_size: int = 10  # 10x10 horizontal grid
     n_layers: int = 5  # 5 vertical layers
-    well_indices: tuple[int, ...] = (
+    well_indices: Tuple[int, ...] = (
         11,
         33,
         55,
@@ -52,7 +51,7 @@ class SystemConfig:
     # Sparse InSAR support.
     # When set, build_G_matrix only produces rows for these pixel indices.
     # None (default) means every pixel has an InSAR observation (toy behaviour).
-    insar_pixel_indices: tuple[int, ...] | None = None
+    insar_pixel_indices: Optional[Tuple[int, ...]] = None
 
     # Geographic spatial smoother radius (metres).
     # When > 0, build_L_spatial() connects station pairs within this distance
@@ -103,7 +102,7 @@ class SystemConfig:
     def create_real_domain(
         cls,
         grid_size: int,
-        well_indices: tuple[int, ...],
+        well_indices: Tuple[int, ...],
         n_layers: int = 59,
         **kwargs: float,
     ) -> "SystemConfig":
@@ -124,6 +123,6 @@ class SyntheticDataset:
     """Container for the generated synthetic ground truth and observations."""
 
     config: SystemConfig
-    m_true: npt.NDArray[np.float64]  # shape: (total_voxels,)
-    d_insar: npt.NDArray[np.float64]  # shape: (n_insar_obs,)
-    w: npt.NDArray[np.float64]  # shape: (n_well_obs,)
+    m_true: np.ndarray  # shape: (total_voxels,)
+    d_insar: np.ndarray  # shape: (n_insar_obs,)
+    w: np.ndarray  # shape: (n_well_obs,)

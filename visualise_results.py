@@ -39,7 +39,6 @@ Outputs (under --vis-dir)
     depth_time_heatmap_<station>.png
 """
 
-from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -50,6 +49,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
+from typing import Optional, List, Dict, Any, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +448,7 @@ def _map_extent(X: np.ndarray, Y: np.ndarray) -> list:
     return [X.min() / 1000, X.max() / 1000, Y.min() / 1000, Y.max() / 1000]
 
 
-def plot_maps(ds, npz: dict, map_month: int | None, paths: dict, dpi: int) -> None:
+def plot_maps(ds, npz: Dict[str, Any], map_month: Optional[int], paths: Dict[str, Any], dpi: int) -> None:
     X = ds["X"].values
     Y = ds["Y"].values
     layers = ds["layer"].values          # depths in metres
@@ -609,7 +609,7 @@ def plot_maps(ds, npz: dict, map_month: int | None, paths: dict, dpi: int) -> No
 def plot_profiles(
     ds,
     npz: dict,
-    profile_station_names: list[str],
+    profile_station_names: List[str],
     paths: dict,
     dpi: int,
 ) -> None:

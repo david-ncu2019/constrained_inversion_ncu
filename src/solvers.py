@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Tuple
 import scipy.sparse as sp
 from scipy.optimize import lsq_linear
 from scipy.sparse.linalg import lsqr
@@ -40,7 +41,7 @@ def solve_tikhonov(dataset: SyntheticDataset) -> np.ndarray:
     return m_hat
 
 
-def solve_bayesian(dataset: SyntheticDataset) -> tuple[np.ndarray, np.ndarray]:
+def solve_bayesian(dataset: SyntheticDataset) -> Tuple[np.ndarray, np.ndarray]:
     """
     Path B: Bayesian Posterior Estimation
     Returns:
@@ -121,7 +122,7 @@ def solve_tikhonov_nnls(dataset: SyntheticDataset) -> np.ndarray:
     return m_hat
 
 
-def solve_bayesian_anisotropic(dataset: SyntheticDataset) -> tuple[np.ndarray, np.ndarray]:
+def solve_bayesian_anisotropic(dataset: SyntheticDataset) -> Tuple[np.ndarray, np.ndarray]:
     """
     Path B (Enhanced): Bayesian Posterior Estimation with Anisotropic Covariance Kernel.
     """

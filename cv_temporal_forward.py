@@ -44,13 +44,13 @@ Outputs
     plots/fold{N}_station_{name}.png — time series (optional)
 """
 
-from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from typing import Optional, List, Dict, Any, Tuple
 
 from src.loader import build_real_dataset, parse_dataset_config
 from src.solvers_temporal import solve_joint_spacetime_cvxpy
@@ -60,7 +60,7 @@ from src.solvers_temporal import solve_joint_spacetime_cvxpy
 # Fold definitions
 # ---------------------------------------------------------------------------
 
-def compute_folds(n_epochs: int) -> list[dict]:
+def compute_folds(n_epochs: int) -> List[Dict[str, Any]]:
     """
     Compute forward-chaining fold boundaries from the total number of epochs.
 
@@ -143,8 +143,8 @@ def run_training_fold(
     lam_t: float,
     sigma_insar: float = 3.0,
     sigma_well: float = 1.0,
-    config_path: Path | None = None,
-) -> tuple[np.ndarray, dict]:
+    config_path: Optional[Path] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Load training data and run inversion for one fold.
 
@@ -194,11 +194,11 @@ def run_training_fold(
 
 def load_validation_data(
     data_dir: Path,
-    station_names: list[str],
-    valid_depths_m: list[int],
+    station_names: List[str],
+    valid_depths_m: List[int],
     val_month_start: int,
     val_month_end: int,
-) -> tuple[np.ndarray, np.ndarray, list[str]]:
+) -> Tuple[np.ndarray, np.ndarray, List[str]]:
     """
     Load raw incremental InSAR and MLCW for the validation window.
 
@@ -261,7 +261,7 @@ def load_validation_data(
 def prepare_validation_arrays(
     insar_val_inc: np.ndarray,
     mlcw_val_inc: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Apply sign negation and cumsum from the start of the validation window.
 
@@ -328,10 +328,10 @@ def predict_validation_compaction(
 def compute_fold_metrics(
     pred: np.ndarray,
     true: np.ndarray,
-    valid_depths_m: list[int],
-    station_names: list[str],
+    valid_depths_m: List[int],
+    station_names: List[str],
     fold_id: int,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Compute per-layer and per-station-layer metrics for one fold.
 
@@ -420,8 +420,8 @@ def plot_fold_timeseries(
     pred: np.ndarray,
     true: np.ndarray,
     insar_val_cum: np.ndarray,
-    station_names: list[str],
-    valid_depths_m: list[int],
+    station_names: List[str],
+    valid_depths_m: List[int],
     fold_id: int,
     val_month_start: int,
     output_dir: Path,

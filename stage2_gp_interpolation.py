@@ -46,7 +46,6 @@ Outputs
         insar_cum          (time, Y, X)     — cumulative InSAR used (mm)
 """
 
-from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -55,6 +54,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from tqdm import tqdm
+from typing import Optional, List, Dict, Tuple, Any
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,12 +114,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grid-resolution-m", default=None, type=float)
     p.add_argument("--crs", default="EPSG:3826 (TWD97 TM2)", type=str)
 
+    # Anisotropy configurations
+    p.add_argument("--gp-mode", default="isotropic", choices=["isotropic", "anisotropic"],
+                   help="Set to 'anisotropic' to use RotatedGPR.")
+    p.add_argument("--angle-search", default="bounded", choices=["bounded", "global"],
+                   help="Search method for rotation angle.")
+    p.add_argument("--max-anisotropy", default=None, type=float,
+                   help="Limit maximum anisotropy ratio (e.g., 5.0).")
+    p.add_argument("--angle-min", default=0.0, type=float, help="Min rotation angle.")
+    p.add_argument("--angle-max", default=180.0, type=float, help="Max rotation angle.")
+
     return p.parse_args()
 
 
 def load_inversion_results(
     npz_path: Path,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[str], bool]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[int], List[str], bool]:
     """
     Load station-level inversion output.
 
@@ -152,7 +162,7 @@ def load_grid_insar(
     y_dim: str = "Y",
     time_dim: str = "Time",
     time_label_var: str = "month_label",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Load the grid points NetCDF structure.
 
@@ -223,7 +233,11 @@ def fit_gp_per_layer(
     gp_noise_level: float = 1e-3,
     gp_noise_level_min: float = 1e-8,
     gp_noise_level_max: float = 1.0,
-) -> tuple[np.ndarray, np.ndarray]:
+    gp_mode: str = "isotropic",
+    angle_search: str = "bounded",
+    max_anisotropy: Optional[float] = None,
+    angle_bounds: Tuple[float, float] = (0, 180),
+) -> Tuple[np.ndarray, np.ndarray, List[Dict[str, Any]]]:
     """
     Fit independent GPs for each depth layer and predict at grid pixels.
 
@@ -233,14 +247,21 @@ def fit_gp_per_layer(
     x_train_km, y_train_km : np.ndarray, shape (n_stations,) — km
     x_pred_km, y_pred_km   : np.ndarray, shape (n_pixels,)  — km
     n_restarts : int
+    gp_mode : str
+        "isotropic" or "anisotropic"
+    angle_search : str
+        "bounded" or "global"
 
     Returns
     -------
     mean_grid : np.ndarray, shape (n_layers, n_pixels)
     std_grid  : np.ndarray, shape (n_layers, n_pixels)
+    anisotropy_params : list of dict
+        Learned parameters per layer (empty if isotropic)
     """
     from sklearn.gaussian_process import GaussianProcessRegressor
-    from sklearn.gaussian_process.kernels import Matern, WhiteKernel
+    from sklearn.gaussian_process.kernels import Matern, WhiteKernel, ConstantKernel as C
+    from src.spatial_solvers import RotatedGPR
 
     n_layers = depth_weights.shape[1]
     n_pixels = len(x_pred_km)
@@ -250,6 +271,7 @@ def fit_gp_per_layer(
 
     mean_grid = np.full((n_layers, n_pixels), np.nan)
     std_grid = np.full((n_layers, n_pixels), np.nan)
+    anisotropy_params = []
 
     for l in tqdm(range(n_layers), desc="GP fitting per layer", unit="layer"):
         y_train = depth_weights[:, l]
@@ -258,28 +280,57 @@ def fit_gp_per_layer(
         if np.all(y_train == 0):
             mean_grid[l] = 0.0
             std_grid[l] = 0.0
+            anisotropy_params.append({"layer": l, "status": "all_zeros"})
             continue
 
-        kernel = (
-            Matern(nu=2.5, length_scale=gp_length_scale, length_scale_bounds=(gp_length_scale_min, gp_length_scale_max))
-            + WhiteKernel(noise_level=gp_noise_level, noise_level_bounds=(gp_noise_level_min, gp_noise_level_max))
-        )
-        gp = GaussianProcessRegressor(
-            kernel=kernel,
-            n_restarts_optimizer=n_restarts,
-            normalize_y=True,
-        )
-        gp.fit(X_train, y_train)
-        mu, sigma = gp.predict(X_pred, return_std=True)
+        if gp_mode == "anisotropic":
+            # For rotated GPR, we need the Matern kernel to have separate length scales for 2D
+            kernel = (
+                C(1.0, (1e-3, 1e3)) *
+                Matern(nu=2.5, length_scale=[gp_length_scale, gp_length_scale], 
+                       length_scale_bounds=(gp_length_scale_min, gp_length_scale_max))
+                + WhiteKernel(noise_level=gp_noise_level, 
+                             noise_level_bounds=(gp_noise_level_min, gp_noise_level_max))
+            )
+            model = RotatedGPR(
+                kernel=kernel,
+                n_restarts_optimizer=n_restarts,
+                angle_search_method=angle_search,
+                max_anisotropy=max_anisotropy,
+                angle_bounds=angle_bounds,
+                random_state=42
+            )
+        else:
+            # Standard Isotropic
+            kernel = (
+                Matern(nu=2.5, length_scale=gp_length_scale, 
+                       length_scale_bounds=(gp_length_scale_min, gp_length_scale_max))
+                + WhiteKernel(noise_level=gp_noise_level, 
+                             noise_level_bounds=(gp_noise_level_min, gp_noise_level_max))
+            )
+            model = GaussianProcessRegressor(
+                kernel=kernel,
+                n_restarts_optimizer=n_restarts,
+                normalize_y=True,
+                random_state=42
+            )
+
+        model.fit(X_train, y_train)
+        mu, sigma = model.predict(X_pred, return_std=True)
         mean_grid[l] = mu
         std_grid[l] = sigma
+        
+        if gp_mode == "anisotropic":
+            p = model.get_kernel_params()
+            p["layer"] = l
+            anisotropy_params.append(p)
 
-    return mean_grid, std_grid
+    return mean_grid, std_grid, anisotropy_params
 
 
 def normalise_weights(
     mean_grid: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Clip and normalise GP mean weights so that Σ_l mean[l, p] ≤ 1.
 
@@ -304,9 +355,9 @@ def normalise_weights(
 
 def assign_temporal_rmse(
     temporal_cv_df: pd.DataFrame,
-    valid_depths_m: list[int],
+    valid_depths_m: List[int],
     n_time: int,
-    folds: list[dict] | None = None,
+    folds: Optional[List[Dict[str, Any]]] = None,
 ) -> np.ndarray:
     """
     Expand per-fold temporal CV RMSE to the full time axis.
@@ -356,12 +407,12 @@ def assign_temporal_rmse(
 
 
 def load_cv_errors(
-    spatial_csv: Path | None,
-    temporal_csv: Path | None,
-    valid_depths_m: list[int],
+    spatial_csv: Optional[Path],
+    temporal_csv: Optional[Path],
+    valid_depths_m: List[int],
     n_time: int,
-    folds: list[dict] | None = None,
-) -> tuple[np.ndarray | None, np.ndarray | None]:
+    folds: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Load spatial and temporal CV RMSE outputs and align them to valid_depths_m.
 
@@ -415,13 +466,13 @@ def build_output_dataset(
     x_coords: np.ndarray,
     y_coords: np.ndarray,
     time_labels: np.ndarray,
-    valid_depths_m: list[int],
+    valid_depths_m: List[int],
     std_threshold: float,
     valid_mask: np.ndarray,
-    spatial_cv_rmse: np.ndarray | None = None,
-    temporal_cv_sigma: np.ndarray | None = None,
+    spatial_cv_rmse: Optional[np.ndarray] = None,
+    temporal_cv_sigma: Optional[np.ndarray] = None,
     crs: str = "EPSG:3826 (TWD97 TM2)",
-    grid_resolution_m: float | None = None,
+    grid_resolution_m: Optional[float] = None,
 ) -> xr.Dataset:
     """
     Assemble the output xarray Dataset.
@@ -475,7 +526,7 @@ def build_output_dataset(
     )  # (n_time, n_y, n_x)
 
     # Combined total uncertainty: σ_total² = σ_gp² + σ_spatial_CV² + σ_temporal_CV²
-    compaction_total_std: np.ndarray | None = None
+    compaction_total_std: Optional[np.ndarray] = None
     if spatial_cv_rmse is not None and temporal_cv_sigma is not None:
         # spatial_cv_rmse: (n_layers,) — dimensionless weight-space RMSE
         # Convert to mm: sigma_spatial_mm[t,l,y,x] = rmse[l] * |InSAR_cum[t,y,x]|
@@ -667,8 +718,8 @@ def main() -> None:
     y_train_km = y_twd97 / 1000.0
 
     # ── Fit GPs per layer ─────────────────────────────────────────────────
-    print(f"\nFitting {n_layers} GPs (n_restarts={args.n_restarts}) ...")
-    mean_valid, std_valid = fit_gp_per_layer(
+    print(f"\nFitting {n_layers} GPs (n_restarts={args.n_restarts}, mode={args.gp_mode}) ...")
+    mean_valid, std_valid, anisotropy_params = fit_gp_per_layer(
         depth_weights=depth_weights,
         x_train_km=x_train_km,
         y_train_km=y_train_km,
@@ -681,8 +732,28 @@ def main() -> None:
         gp_noise_level=args.gp_noise_level,
         gp_noise_level_min=args.gp_noise_level_min,
         gp_noise_level_max=args.gp_noise_level_max,
+        gp_mode=args.gp_mode,
+        angle_search=args.angle_search,
+        max_anisotropy=args.max_anisotropy,
+        angle_bounds=(args.angle_min, args.angle_max),
     )
     # mean_valid, std_valid: (n_layers, n_valid_pixels)
+
+    if args.gp_mode == "anisotropic":
+        # Save anisotropy parameters for reporting
+        import json
+        p_out = args.output_nc.with_suffix(".anisotropy.json")
+        with open(p_out, "w") as f:
+            json.dump(anisotropy_params, f, indent=2)
+        print(f"  Learned anisotropy parameters saved to: {p_out}")
+        
+        # Log summary table
+        print("\n  Learned Anisotropy Summary:")
+        print("  Layer | Angle (deg) | Ratio | Likelihood")
+        print("  ------|-------------|-------|-----------")
+        for p in anisotropy_params:
+            if "rotation_angle_deg" in p:
+                print(f"  {p['layer']:5d} | {p['rotation_angle_deg']:11.2f} | {p['anisotropy_ratio']:5.2f} | {p['log_marginal_likelihood']:.2f}")
 
     # ── Normalise weights (sum ≤ 1 per pixel) ────────────────────────────
     mean_norm, scale_factor = normalise_weights(mean_valid)

@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import numpy as np
+from typing import Optional, List, Dict, Any, Tuple, Union
 import scipy.sparse as sp
 from scipy.optimize import lsq_linear
 
@@ -96,8 +95,8 @@ def solve_joint_spacetime(dataset: SyntheticDataset) -> np.ndarray:
 
 def solve_joint_spacetime_cvxpy(
     dataset: SyntheticDataset,
-    x_twd97: list[float] | np.ndarray,
-    y_twd97: list[float] | np.ndarray,
+    x_twd97: Union[List[float], np.ndarray],
+    y_twd97: Union[List[float], np.ndarray],
 ) -> np.ndarray:
     """
     Joint space-time inversion using CVXPY + OSQP with a hard inequality

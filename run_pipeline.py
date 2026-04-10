@@ -40,7 +40,6 @@ Outputs (under [Paths] output_dir)
   logs/stage_*.log
 """
 
-from __future__ import annotations
 
 import argparse
 import configparser
@@ -54,6 +53,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from typing import Optional, List, Dict, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ def get_next_output_dir(parent_dir: Path, prefix: str = "output_") -> Path:
     return parent_dir / f"{prefix}{next_idx:03d}"
 
 
-def get_paths(cfg: configparser.ConfigParser, output_dir_override: str | None) -> dict:
+def get_paths(cfg: configparser.ConfigParser, output_dir_override: Optional[str]) -> Dict[str, Path]:
     """Resolve all key paths from the config."""
     data_dir = Path(cfg.get("Paths", "data_dir", fallback="my_input_data"))
     
@@ -140,9 +140,9 @@ def get_paths(cfg: configparser.ConfigParser, output_dir_override: str | None) -
 
 def run_stage(
     name: str,
-    cmd: list[str],
+    cmd: List[str],
     log_path: Path,
-    skip_if: Path | None,
+    skip_if: Optional[Path],
     force: bool,
     dry_run: bool,
     logger: logging.Logger,
@@ -186,7 +186,7 @@ def run_stage(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
+            universal_newlines=True,
             encoding="utf-8",
             errors="replace",
         )
@@ -216,7 +216,7 @@ def run_stage(
 # ---------------------------------------------------------------------------
 
 
-def select_best_params(tuning_csv: Path) -> tuple[float, float]:
+def select_best_params(tuning_csv: Path) -> Tuple[float, float]:
     """
     Read hyperparam_results_full.csv and return (lam, lam_t) with lowest mean_rmse_mm.
 
@@ -237,7 +237,7 @@ def write_best_params(path: Path, lam: float, lam_t: float) -> None:
     path.write_text(f"lam={lam}\nlam_t={lam_t}\n", encoding="utf-8")
 
 
-def read_best_params(path: Path) -> tuple[float, float]:
+def read_best_params(path: Path) -> Tuple[float, float]:
     lines = {
         k.strip(): float(v.strip())
         for k, v in (line.split("=") for line in path.read_text().splitlines() if "=" in line)
@@ -252,10 +252,10 @@ def read_best_params(path: Path) -> tuple[float, float]:
 
 def generate_summary(
     config_path: Path,
-    paths: dict,
+    paths: Dict[str, Path],
     best_lam: float,
     best_lam_t: float,
-    stages_run: list[str],
+    stages_run: List[str],
     elapsed_s: float,
     skip_cv: bool,
     logger: logging.Logger,
@@ -339,6 +339,22 @@ def generate_summary(
             lines += [f"  Low-confidence pixels: {lc} / {total_px} "
                       f"({100*lc/total_px:.1f}%)"]
         lines += [f"  compaction_total_std : {'included' if has_combined else 'NOT included (CV skipped or failed)'}"]
+        lines += [""]
+
+    # Anisotropy metrics
+    aniso_json = paths["gp_nc"].with_suffix(".anisotropy.json")
+    if aniso_json.exists():
+        import json
+        with open(aniso_json, "r") as f:
+            params = json.load(f)
+        
+        lines += ["Learned Anisotropy (Rotated GPR):"]
+        for p in params:
+            if "rotation_angle_deg" in p:
+                lines += [
+                    f"  Layer {p['layer']}: Angle={p['rotation_angle_deg']:.1f}°, "
+                    f"Ratio={p['anisotropy_ratio']:.2f}:1, LML={p['log_marginal_likelihood']:.2f}"
+                ]
         lines += [""]
 
     # Honest uncertainty statement
@@ -469,6 +485,13 @@ def main() -> None:
     no_plots = cfg.getboolean("Report", "no_plots", fallback=False)
     make_plots_cfg = cfg.getboolean("Report", "make_plots", fallback=False)
     make_plots = args.make_plots or make_plots_cfg
+
+    # Anisotropy config
+    gp_mode        = cfg.get("GP", "gp_mode",        fallback="isotropic")
+    angle_search   = cfg.get("GP", "angle_search",   fallback="bounded")
+    max_anisotropy = cfg.get("GP", "max_anisotropy", fallback="").strip()
+    angle_min      = cfg.getfloat("GP", "angle_min", fallback=0.0)
+    angle_max      = cfg.getfloat("GP", "angle_max", fallback=180.0)
 
     # Tuning config
     lam_cands   = cfg.get("Tuning", "lam_candidates",   fallback="0.001,0.01,0.1")
@@ -648,7 +671,13 @@ def main() -> None:
         "--output-nc",     str(paths["gp_nc"]),
         "--n-restarts",    str(n_restarts),
         "--std-threshold", str(std_threshold),
+        "--gp-mode",       gp_mode,
+        "--angle-search",  angle_search,
+        "--angle-min",     str(angle_min),
+        "--angle-max",     str(angle_max),
     ]
+    if max_anisotropy:
+        cmd_gp += ["--max-anisotropy", max_anisotropy]
     # Add CV CSV paths only if both exist (or will exist after stages 3a/3b)
     spatial_csv_exists = paths["spatial_csv"].exists() or (
         not skip_cv and run_spatial_cv and not args.dry_run
@@ -697,11 +726,11 @@ def main() -> None:
             logger=logger,
         )
     else:
-        print(f"\n  [DRY-RUN] Stage 5: Summary Report → {paths['summary']}")
+        print(f"\n  [DRY-RUN] Stage 5: Summary Report -> {paths['summary']}")
 
-    # ════════════════════════════════════════════════════════════════════════
+    # =========================================================================
     # Stage 6: Visualisations (optional)
-    # ════════════════════════════════════════════════════════════════════════
+    # =========================================================================
     if make_plots:
         vis_dir = paths["output_dir"] / "visualisations"
         cmd_vis = [

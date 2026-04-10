@@ -31,7 +31,6 @@ Outputs
     hyperparam_heatmap.png       — heatmap of mean RMSE (optional)
 """
 
-from __future__ import annotations
 
 import argparse
 import time
@@ -40,6 +39,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from typing import Optional, List, Dict, Any, Tuple
 
 from cv_temporal_forward import (
     compute_folds,
@@ -60,8 +60,6 @@ def _get_fold3(data_dir: Path) -> dict:
     ----------
     data_dir : Path
 
-    Returns
-    -------
     dict with keys: fold, train_month_end, val_start, val_end
     """
     csv_dir = data_dir / "CSV_files"
@@ -70,6 +68,9 @@ def _get_fold3(data_dir: Path) -> dict:
     month_cols = [c for c in df.columns if c.startswith("Month_")]
     n_epochs = len(month_cols)
     return compute_folds(n_epochs)[2]   # index 2 = fold 3
+
+def get_fold3(data_dir: Path) -> Dict[str, Any]:
+    return _get_fold3(data_dir)
 
 
 DEFAULT_LAM_CANDIDATES = [1e-3, 1e-2, 1e-1]
@@ -87,9 +88,9 @@ def evaluate_one_config(
     lam_t: float,
     sigma_insar: float = 3.0,
     sigma_well: float = 1.0,
-    fold3_def: dict | None = None,
-    config_path: Path | None = None,
-) -> dict:
+    fold3_def: Optional[Dict[str, Any]] = None,
+    config_path: Optional[Path] = None,
+) -> Dict[str, Any]:
     """
     Evaluate one (lam, lam_t) pair using fold 3 temporal CV.
 
@@ -122,8 +123,8 @@ def evaluate_one_config(
         sigma_insar=sigma_insar,
         sigma_well=sigma_well,
     )
-    station_names: list[str] = meta["station_names"]
-    valid_depths_m: list[int] = meta["valid_depths_m"]
+    station_names: List[str] = meta["station_names"]
+    valid_depths_m: List[int] = meta["valid_depths_m"]
 
     # ── Load and prepare validation data ─────────────────────────────────
     insar_val_inc, mlcw_val_inc, _ = load_validation_data(
@@ -161,8 +162,8 @@ def evaluate_one_config(
 
 
 def build_results_tables(
-    results: list[dict],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    results: List[Dict[str, Any]],
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Build a full results DataFrame and a lam × lam_t pivot table.
 
