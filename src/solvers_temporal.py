@@ -179,7 +179,7 @@ def solve_joint_spacetime_cvxpy(
     # C_ineq has same sparsity pattern as the InSAR rows of A_st.
     # Reuse block_diag of G for the constraint matrix.
     C_ineq = build_block_diagonal_operator(G, T)          # (T*n_stations, T*M)
-    d_ineq = dataset.d_insar                               # (T*n_stations,)
+    d_ineq = np.maximum(dataset.d_insar, 0.0)              # (T*n_stations,)
 
     # ── CVXPY problem ─────────────────────────────────────────────────────
     sigma_insar = config.sigma_insar

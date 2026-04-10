@@ -48,7 +48,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import SyntheticDataset, SystemConfig
-from src.loader import build_real_dataset
+from src.loader import build_real_dataset, parse_dataset_config
 from src.solvers_temporal import solve_joint_spacetime_cvxpy
 
 
@@ -353,6 +353,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--data-dir", default="my_input_data/", type=Path)
     p.add_argument("--inversion-npz", default="output/real_m_est.npz", type=Path)
     p.add_argument("--output-dir", default="output/cv_spatial_gp/", type=Path)
+    p.add_argument("--config", default=None, type=Path, help="Path to pipeline_config.ini")
     p.add_argument("--lam", default=0.01, type=float)
     p.add_argument("--lam-t", default=0.3, type=float)
     p.add_argument("--n-restarts", default=10, type=int)

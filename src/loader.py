@@ -43,14 +43,46 @@ import pandas as pd
 import xarray as xr
 
 from src.config import SyntheticDataset, SystemConfig
+import configparser
 
+
+def parse_dataset_config(config_path: Path | str | None) -> dict[str, Any]:
+    """Extract and cast [Dataset] parameters from pipeline_config.ini."""
+    if not config_path: return {}
+    p = Path(config_path)
+    if not p.exists(): return {}
+
+    cfg = configparser.ConfigParser()
+    cfg.read(p, encoding="utf-8")
+    if not cfg.has_section("Dataset"): return {}
+
+    kwargs = {}
+    ds = dict(cfg.items("Dataset"))
+    str_keys = [
+        "grid_metrics_file", "station_coords_file", "csv_dir_name", 
+        "csv_name_pattern", "x_col", "y_col", "depth_col", "month_col_prefix"
+    ]
+    for k in str_keys:
+        if k in ds: kwargs[k] = ds[k].strip()
+
+    if "insar_surface_depth" in ds:
+        kwargs["insar_surface_depth"] = int(ds["insar_surface_depth"])
+    if "min_insar_fraction" in ds:
+        kwargs["min_insar_fraction"] = float(ds["min_insar_fraction"])
+
+    return kwargs
 
 # ---------------------------------------------------------------------------
 # Low-level helpers
 # ---------------------------------------------------------------------------
 
 
-def get_grid_specs(nc_path: Path) -> dict[str, Any]:
+def get_grid_specs(
+    nc_path: Path,
+    x_dim: str = "X",
+    y_dim: str = "Y",
+    depth_dim: str = "Depth",
+) -> dict[str, Any]:
     """
     Read spatial metadata from the NetCDF output template.
 
@@ -70,11 +102,11 @@ def get_grid_specs(nc_path: Path) -> dict[str, Any]:
     """
     ds = xr.open_dataset(nc_path)
     specs: dict[str, Any] = {
-        "x_coords": ds["X"].values.copy(),
-        "y_coords": ds["Y"].values.copy(),
-        "depths": ds["Depth"].values.copy(),
-        "grid_rows": int(ds.sizes["Y"]),
-        "grid_cols": int(ds.sizes["X"]),
+        "x_coords": ds[x_dim].values.copy(),
+        "y_coords": ds[y_dim].values.copy(),
+        "depths": ds[depth_dim].values.copy(),
+        "grid_rows": int(ds.sizes[y_dim]),
+        "grid_cols": int(ds.sizes[x_dim]),
     }
     ds.close()
     return specs
@@ -103,6 +135,8 @@ def load_station_coords(
     coords_path: Path,
     x_coords: npt.NDArray[np.float64],
     y_coords: npt.NDArray[np.float64],
+    x_col: str = "X_TWD97",
+    y_col: str = "Y_TWD97",
 ) -> pd.DataFrame:
     """
     Load station coordinates and compute nearest-grid-point pixel indices.
@@ -113,10 +147,11 @@ def load_station_coords(
         Ename, Code, X_TWD97, Y_TWD97, pixel_index, grid_row, grid_col
     """
     df = pd.read_csv(coords_path)
+        
     pixel_indices, grid_rows, grid_cols = [], [], []
     for _, row in df.iterrows():
         pidx, gr, gc = coord_to_pixel_index(
-            float(row["X_TWD97"]), float(row["Y_TWD97"]), x_coords, y_coords
+            float(row[x_col]), float(row[y_col]), x_coords, y_coords
         )
         pixel_indices.append(pidx)
         grid_rows.append(gr)
@@ -130,6 +165,9 @@ def load_station_coords(
 def find_valid_mlcw_depths(
     csv_dir: Path,
     station_names: list[str],
+    month_col_prefix: str = "Month_",
+    csv_name_pattern: str = "{name}_insar_mlcw.csv",
+    depth_col: str = "Depth",
 ) -> list[int]:
     """
     Find depth levels (depth > 0) that have at least one non-NaN value
@@ -142,11 +180,11 @@ def find_valid_mlcw_depths(
     """
     valid: set[int] = set()
     for name in station_names:
-        csv_path = csv_dir / f"{name}_insar_mlcw.csv"
+        csv_path = csv_dir / csv_name_pattern.format(name=name)
         if not csv_path.exists():
             continue
-        df = pd.read_csv(csv_path).set_index("Depth")
-        month_cols = [c for c in df.columns if c.startswith("Month_")]
+        df = pd.read_csv(csv_path).set_index(depth_col)
+        month_cols = [c for c in df.columns if str(c).startswith(month_col_prefix)]
         for depth_val, row in df.iterrows():
             depth = int(depth_val)
             if depth == 0:
@@ -190,6 +228,16 @@ def build_real_dataset(
     sigma_insar: float = 3.0,
     sigma_well: float = 1.0,
     cumulate: bool = True,
+    grid_metrics_file: str = "grid_pnt_datacube_500m.nc",
+    station_coords_file: str = "mlcw_station_coordinates.csv",
+    csv_dir_name: str = "CSV_files",
+    csv_name_pattern: str = "{name}_insar_mlcw.csv",
+    x_col: str = "X_TWD97",
+    y_col: str = "Y_TWD97",
+    depth_col: str = "Depth",
+    month_col_prefix: str = "Month_",
+    insar_surface_depth: int = 0,
+    min_insar_fraction: float = 0.50,
 ) -> tuple[SyntheticDataset, SystemConfig, dict[str, Any]]:
     """
     Load real CRFP monitoring data into a SyntheticDataset for inversion.
@@ -246,9 +294,9 @@ def build_real_dataset(
             month_start, month_end   : int
     """
     data_dir = Path(data_dir)
-    nc_path = data_dir / "grid_pnt_datacube_500m.nc"
-    coords_path = data_dir / "mlcw_station_coordinates.csv"
-    csv_dir = data_dir / "CSV_files"
+    nc_path = data_dir / grid_metrics_file
+    coords_path = data_dir / station_coords_file
+    csv_dir = data_dir / csv_dir_name
 
     # ── 1. Spatial grid metadata from NetCDF template ────────────────────
     grid = get_grid_specs(nc_path)
@@ -256,47 +304,48 @@ def build_real_dataset(
     y_coords: npt.NDArray[np.float64] = grid["y_coords"]
 
     # ── 2. Station coordinates → nearest output-grid pixel ───────────────
-    stations = load_station_coords(coords_path, x_coords, y_coords)
+    stations = load_station_coords(coords_path, x_coords, y_coords, x_col=x_col, y_col=y_col)
     station_names: list[str] = stations["Ename"].tolist()
 
     # ── 2b. Exclude stations with insufficient InSAR temporal coverage ────
     # Stations with < 50% valid InSAR months are excluded: boundary-clamping
     # extrapolation for the missing epochs has no physical basis.
-    _min_insar_fraction = 0.50
     _all_month_sample = pd.read_csv(
-        csv_dir / f"{station_names[0]}_insar_mlcw.csv", index_col=0
+        csv_dir / csv_name_pattern.format(name=station_names[0]), index_col=0
     )
-    _n_total_months = len([c for c in _all_month_sample.columns if c.startswith("Month_")])
+    _n_total_months = len([c for c in _all_month_sample.columns if str(c).startswith(month_col_prefix)])
 
     def _count_valid_insar(name: str) -> int:
-        p = csv_dir / f"{name}_insar_mlcw.csv"
+        p = csv_dir / csv_name_pattern.format(name=name)
         if not p.exists():
             return 0
         _df = pd.read_csv(p, index_col=0)
-        _month_cols = [c for c in _df.columns if c.startswith("Month_")]
-        if 0 not in _df.index:
+        _month_cols = [c for c in _df.columns if str(c).startswith(month_col_prefix)]
+        if insar_surface_depth not in _df.index:
             return 0
-        return int(_df.loc[0, _month_cols].notna().sum())
+        return int(_df.loc[insar_surface_depth, _month_cols].notna().sum())
 
     _valid_counts = {name: _count_valid_insar(name) for name in station_names}
     _excluded = [n for n, c in _valid_counts.items()
-                 if c < _min_insar_fraction * _n_total_months]
+                 if c < min_insar_fraction * _n_total_months]
     if _excluded:
-        print(f"[loader] Excluding {len(_excluded)} stations with < 50% InSAR coverage: {_excluded}")
+        print(f"[loader] Excluding {len(_excluded)} stations with < {int(min_insar_fraction*100)}% InSAR coverage: {_excluded}")
     stations = stations[~stations["Ename"].isin(_excluded)].reset_index(drop=True)
     station_names = stations["Ename"].tolist()
     n_stations = len(stations)
 
     # ── 3. Valid MLCW depth levels ────────────────────────────────────────
-    valid_depths = find_valid_mlcw_depths(csv_dir, station_names)
+    valid_depths = find_valid_mlcw_depths(
+        csv_dir, station_names, month_col_prefix, csv_name_pattern, depth_col
+    )
     n_layers = len(valid_depths)
 
     # ── 4. Auto-detect month columns ──────────────────────────────────────
     # Column names are zero-padded (e.g., 'Month_001' ... 'Month_083').
     # Auto-detect from the first station CSV to avoid hardcoding the format.
-    sample_csv_path = csv_dir / f"{station_names[0]}_insar_mlcw.csv"
+    sample_csv_path = csv_dir / csv_name_pattern.format(name=station_names[0])
     sample_df = pd.read_csv(sample_csv_path)
-    all_month_cols = sorted([c for c in sample_df.columns if c.startswith("Month_")])
+    all_month_cols = sorted([str(c) for c in sample_df.columns if str(c).startswith(month_col_prefix)])
     month_end_idx = month_end if month_end is not None else len(all_month_cols) - 1
     month_cols = all_month_cols[month_start : month_end_idx + 1]
     n_epochs = len(month_cols)
@@ -327,16 +376,16 @@ def build_real_dataset(
 
     for s_idx, (_, srow) in enumerate(stations.iterrows()):
         name = str(srow["Ename"])
-        csv_path = csv_dir / f"{name}_insar_mlcw.csv"
+        csv_path = csv_dir / csv_name_pattern.format(name=name)
         if not csv_path.exists():
             continue
-        df = pd.read_csv(csv_path).set_index("Depth")
+        df = pd.read_csv(csv_path).set_index(depth_col)
 
-        # InSAR: depth = 0
-        if 0 in df.index:
+        # InSAR: depth = insar_surface_depth
+        if insar_surface_depth in df.index:
             for t_idx, mc in enumerate(month_cols):
                 if mc in df.columns:
-                    val = df.loc[0, mc]
+                    val = df.loc[insar_surface_depth, mc]
                     if not pd.isna(val):
                         d_insar_matrix[s_idx, t_idx] = float(val)
 
@@ -396,8 +445,8 @@ def build_real_dataset(
 
     metadata: dict[str, Any] = {
         "station_names": station_names,
-        "x_twd97": stations["X_TWD97"].tolist(),
-        "y_twd97": stations["Y_TWD97"].tolist(),
+        "x_twd97": stations[x_col].tolist(),
+        "y_twd97": stations[y_col].tolist(),
         "full_grid_pixel_indices": stations["pixel_index"].tolist(),
         "grid_rows": int(grid["grid_rows"]),
         "grid_cols": int(grid["grid_cols"]),

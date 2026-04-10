@@ -188,6 +188,7 @@ def run_stage(
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
+            errors="replace",
         )
         log_fh.write(result.stdout or "")
 
@@ -516,6 +517,7 @@ def main() -> None:
 
         cmd_tuning = [
             python, "tune_hyperparams.py",
+            "--config",          str(args.config),
             "--data-dir",        str(paths["data_dir"]),
             "--output-dir",      str(paths["tuning_dir"]),
             "--sigma-insar",     str(sigma_insar),
@@ -550,6 +552,7 @@ def main() -> None:
     # ════════════════════════════════════════════════════════════════════════
     cmd_inversion = [
         python, "main_real.py",
+        "--config",       str(args.config),
         "--data-dir",     str(paths["data_dir"]),
         "--output-dir",   str(paths["output_dir"]),
         "--lam",          str(best_lam),
@@ -580,6 +583,7 @@ def main() -> None:
     if not skip_cv and run_spatial_cv:
         cmd_spatial_cv = [
             python, "cv_spatial_gp.py",
+            "--config",         str(args.config),
             "--data-dir",       str(paths["data_dir"]),
             "--inversion-npz",  str(paths["inversion_npz"]),
             "--output-dir",     str(paths["spatial_cv_dir"]),
@@ -609,6 +613,7 @@ def main() -> None:
     if not skip_cv and run_temporal_cv:
         cmd_temporal_cv = [
             python, "cv_temporal_forward.py",
+            "--config",      str(args.config),
             "--data-dir",    str(paths["data_dir"]),
             "--output-dir",  str(paths["temporal_cv_dir"]),
             "--lam",         str(best_lam),

@@ -94,6 +94,26 @@ def parse_args() -> argparse.Namespace:
         help="Path to temporal_cv_per_layer.csv from cv_temporal_forward.py. "
              "If provided, temporal CV RMSE is included in total uncertainty.",
     )
+    
+    # Target configurations (Issues 8, 9, 10, 12)
+    p.add_argument("--displacement-var", default="displacement", type=str)
+    p.add_argument("--insar-depth-dim", default="Depth", type=str)
+    p.add_argument("--insar-surface-depth", default=0, type=int)
+    p.add_argument("--x-dim", default="X", type=str)
+    p.add_argument("--y-dim", default="Y", type=str)
+    p.add_argument("--time-dim", default="Time", type=str)
+    p.add_argument("--time-label-var", default="month_label", type=str)
+    
+    p.add_argument("--gp-length-scale", default=5.0, type=float)
+    p.add_argument("--gp-length-scale-min", default=0.01, type=float)
+    p.add_argument("--gp-length-scale-max", default=200.0, type=float)
+    p.add_argument("--gp-noise-level", default=1e-3, type=float)
+    p.add_argument("--gp-noise-level-min", default=1e-8, type=float)
+    p.add_argument("--gp-noise-level-max", default=1.0, type=float)
+    
+    p.add_argument("--grid-resolution-m", default=None, type=float)
+    p.add_argument("--crs", default="EPSG:3826 (TWD97 TM2)", type=str)
+
     return p.parse_args()
 
 
@@ -123,15 +143,23 @@ def load_inversion_results(
 
 
 def load_grid_insar(
-    nc_path: Path, apply_cumsum: bool = True
+    nc_path: Path,
+    apply_cumsum: bool = True,
+    displacement_var: str = "displacement",
+    insar_depth_dim: str = "Depth",
+    insar_surface_depth: int = 0,
+    x_dim: str = "X",
+    y_dim: str = "Y",
+    time_dim: str = "Time",
+    time_label_var: str = "month_label",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Load InSAR surface displacement from the 500 m grid NetCDF.
+    Load the grid points NetCDF structure.
 
     Parameters
     ----------
     nc_path : Path
-        Path to grid_pnt_CRFP_500m_vert_IDW_v1.nc.
+        Path to grid_pnt_CRFP_500m_vert_IDW_v1.nc (or similar).
     apply_cumsum : bool
         If True, accumulate the monthly increments to cumulative displacement.
 
@@ -145,13 +173,24 @@ def load_grid_insar(
     time_labels : np.ndarray of str, shape (n_time,)
     """
     ds = xr.open_dataset(nc_path)
-    # Depth=0 slice is the InSAR surface displacement
-    disp = ds["displacement"].sel(Depth=0).values  # (n_time, n_y, n_x), float32
+    # Extract surface layer slice
+    disp = ds[displacement_var].sel({insar_depth_dim: insar_surface_depth}).values  # (n_time, n_y, n_x), float32
     disp = disp.astype(np.float64)
 
-    x_coords = ds["X"].values.copy()
-    y_coords = ds["Y"].values.copy()
-    time_labels = ds["month_label"].values.astype(str)
+    x_coords = ds[x_dim].values.copy()
+    y_coords = ds[y_dim].values.copy()
+
+    # Time configuration parsing (Issue 9, 13)
+    if time_label_var in ds:
+        time_labels = ds[time_label_var].values.astype(str)
+    else:
+        raw_times = ds[time_dim].values
+        if np.issubdtype(raw_times.dtype, np.datetime64):
+            time_labels = np.array([str(t)[:7] for t in raw_times], dtype=str)
+        elif np.issubdtype(raw_times.dtype, np.integer) or np.issubdtype(raw_times.dtype, np.floating):
+            time_labels = np.array([f"T_{int(t):04d}" for t in raw_times], dtype=str)
+        else:
+            time_labels = raw_times.astype(str)
     ds.close()
 
     # Negate: raw data negative = subsidence; make subsidence positive
@@ -178,6 +217,12 @@ def fit_gp_per_layer(
     x_pred_km: np.ndarray,
     y_pred_km: np.ndarray,
     n_restarts: int = 10,
+    gp_length_scale: float = 5.0,
+    gp_length_scale_min: float = 0.01,
+    gp_length_scale_max: float = 200.0,
+    gp_noise_level: float = 1e-3,
+    gp_noise_level_min: float = 1e-8,
+    gp_noise_level_max: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Fit independent GPs for each depth layer and predict at grid pixels.
@@ -216,8 +261,8 @@ def fit_gp_per_layer(
             continue
 
         kernel = (
-            Matern(nu=2.5, length_scale=5.0, length_scale_bounds=(1.0, 50.0))
-            + WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-5, 0.1))
+            Matern(nu=2.5, length_scale=gp_length_scale, length_scale_bounds=(gp_length_scale_min, gp_length_scale_max))
+            + WhiteKernel(noise_level=gp_noise_level, noise_level_bounds=(gp_noise_level_min, gp_noise_level_max))
         )
         gp = GaussianProcessRegressor(
             kernel=kernel,
@@ -261,32 +306,35 @@ def assign_temporal_rmse(
     temporal_cv_df: pd.DataFrame,
     valid_depths_m: list[int],
     n_time: int,
+    folds: list[dict] | None = None,
 ) -> np.ndarray:
     """
     Expand per-fold temporal CV RMSE to the full time axis.
-
-    For time index t:
-      t < 48  → fold 1 RMSE (best available proxy for early extrapolation)
-      48 ≤ t < 60 → fold 1 RMSE
-      60 ≤ t < 72 → fold 2 RMSE
-      72 ≤ t      → fold 3 RMSE  (also used for all post-training-period times)
-
-    Parameters
-    ----------
-    temporal_cv_df : pd.DataFrame
-        Columns: fold, depth_m, rmse, ...  (from temporal_cv_per_layer.csv)
-    valid_depths_m : list[int], length n_layers
-    n_time : int  — total number of time steps (e.g. 132)
-
-    Returns
-    -------
-    sigma_temporal : np.ndarray, shape (n_time, n_layers) — in mm
     """
-    fold_boundaries = {
-        1: (0, 59),    # fold 1 covers time 0–59
-        2: (60, 71),   # fold 2 covers time 60–71
-        3: (72, None), # fold 3 covers 72 onward
-    }
+    if folds is None:
+        fold_ids = sorted(temporal_cv_df["fold"].unique())
+        fold_boundaries = {}
+        for k, fid in enumerate(fold_ids):
+            rows = temporal_cv_df[temporal_cv_df["fold"] == fid]
+            if "val_start" in rows.columns:
+                t_start = int(rows["val_start"].iloc[0])
+            else:
+                t_start = k * (n_time // len(fold_ids))
+            t_end = None if k == len(fold_ids) - 1 else None
+            fold_boundaries[fid] = (t_start if k > 0 else 0, t_end)
+        fold_id_list = list(fold_boundaries.keys())
+        for k in range(len(fold_id_list) - 1):
+            fid = fold_id_list[k]
+            next_fid = fold_id_list[k + 1]
+            fold_boundaries[fid] = (fold_boundaries[fid][0], fold_boundaries[next_fid][0] - 1)
+    else:
+        fold_boundaries = {}
+        for k, fold_def in enumerate(folds):
+            fid = fold_def["fold"]
+            t_start = fold_def["val_start"] if k > 0 else 0
+            t_end = None if k == len(folds) - 1 else folds[k + 1]["val_start"] - 1
+            fold_boundaries[fid] = (t_start, t_end)
+
     n_layers = len(valid_depths_m)
     depth_to_idx = {d: i for i, d in enumerate(valid_depths_m)}
 
@@ -312,6 +360,7 @@ def load_cv_errors(
     temporal_csv: Path | None,
     valid_depths_m: list[int],
     n_time: int,
+    folds: list[dict] | None = None,
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
     """
     Load spatial and temporal CV RMSE outputs and align them to valid_depths_m.
@@ -326,6 +375,7 @@ def load_cv_errors(
         Expected columns: fold, depth_m, rmse, ...
     valid_depths_m : list[int], length n_layers
     n_time : int
+    folds : list of dict, optional
 
     Returns
     -------
@@ -351,7 +401,7 @@ def load_cv_errors(
     temporal_cv_sigma = None
     if temporal_csv is not None and temporal_csv.exists():
         df = pd.read_csv(temporal_csv)
-        temporal_cv_sigma = assign_temporal_rmse(df, valid_depths_m, n_time)
+        temporal_cv_sigma = assign_temporal_rmse(df, valid_depths_m, n_time, folds=folds)
         print(f"  Loaded temporal CV RMSE from: {temporal_csv}")
         print(f"    Mean RMSE across layers and time: {np.nanmean(temporal_cv_sigma):.3f} mm")
 
@@ -370,6 +420,8 @@ def build_output_dataset(
     valid_mask: np.ndarray,
     spatial_cv_rmse: np.ndarray | None = None,
     temporal_cv_sigma: np.ndarray | None = None,
+    crs: str = "EPSG:3826 (TWD97 TM2)",
+    grid_resolution_m: float | None = None,
 ) -> xr.Dataset:
     """
     Assemble the output xarray Dataset.
@@ -548,15 +600,15 @@ def build_output_dataset(
             ),
         },
         coords={
-            "X": xr.DataArray(x_coords, dims=["X"], attrs={"units": "m", "crs": "EPSG:3826"}),
-            "Y": xr.DataArray(y_coords, dims=["Y"], attrs={"units": "m", "crs": "EPSG:3826"}),
+            "X": xr.DataArray(x_coords, dims=["X"], attrs={"units": "m", "crs": crs}),
+            "Y": xr.DataArray(y_coords, dims=["Y"], attrs={"units": "m", "crs": crs}),
             "layer": xr.DataArray(depths_coord, dims=["layer"], attrs={"units": "m", "long_name": "Depth (top of layer)"}),
             "time": xr.DataArray(time_labels, dims=["time"]),
         },
         attrs={
             "description": "GP-interpolated depth weights and layer-wise compaction predictions",
-            "CRS": "EPSG:3826 (TWD97 TM2)",
-            "grid_resolution_m": 500,
+            "CRS": crs,
+            "grid_resolution_m": grid_resolution_m if grid_resolution_m is not None else round(abs(x_coords[1] - x_coords[0])),
             "created_by": "stage2_gp_interpolation.py",
         },
     )
@@ -588,7 +640,14 @@ def main() -> None:
     print(f"\nLoading grid InSAR from: {args.grid_nc}")
     print(f"  Apply cumsum to InSAR: {apply_cumsum}")
     insar_cum, x_coords, y_coords, time_labels = load_grid_insar(
-        args.grid_nc, apply_cumsum=apply_cumsum
+        args.grid_nc, apply_cumsum=apply_cumsum,
+        displacement_var=args.displacement_var,
+        insar_depth_dim=args.insar_depth_dim,
+        insar_surface_depth=args.insar_surface_depth,
+        x_dim=args.x_dim,
+        y_dim=args.y_dim,
+        time_dim=args.time_dim,
+        time_label_var=args.time_label_var,
     )
     n_time, n_y, n_x = insar_cum.shape
     n_pixels = n_y * n_x
@@ -616,6 +675,12 @@ def main() -> None:
         x_pred_km=x_all_km,
         y_pred_km=y_all_km,
         n_restarts=args.n_restarts,
+        gp_length_scale=args.gp_length_scale,
+        gp_length_scale_min=args.gp_length_scale_min,
+        gp_length_scale_max=args.gp_length_scale_max,
+        gp_noise_level=args.gp_noise_level,
+        gp_noise_level_min=args.gp_noise_level_min,
+        gp_noise_level_max=args.gp_noise_level_max,
     )
     # mean_valid, std_valid: (n_layers, n_valid_pixels)
 
@@ -625,11 +690,17 @@ def main() -> None:
     print(f"\nWeight normalisation: {n_rescaled} / {n_valid} valid pixels rescaled (sum > 1)")
 
     # ── Load CV error estimates (optional) ───────────────────────────────
+    from cv_temporal_forward import compute_folds
+    
+    # Optional temporal error assignment
+    folds = compute_folds(n_time) if n_time >= 12 else None
+
     spatial_cv_rmse, temporal_cv_sigma = load_cv_errors(
         spatial_csv=args.spatial_cv_csv,
         temporal_csv=args.temporal_cv_csv,
         valid_depths_m=valid_depths_m,
         n_time=n_time,
+        folds=folds,
     )
     if spatial_cv_rmse is not None and temporal_cv_sigma is not None:
         print("  Combined uncertainty (compaction_total_std) will be included in output.")
@@ -659,6 +730,8 @@ def main() -> None:
         valid_mask=valid_mask,
         spatial_cv_rmse=spatial_cv_rmse,
         temporal_cv_sigma=temporal_cv_sigma,
+        crs=args.crs,
+        grid_resolution_m=args.grid_resolution_m,
     )
 
     low_conf_count = int(ds["low_confidence"].values.sum())

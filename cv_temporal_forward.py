@@ -52,7 +52,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.loader import build_real_dataset
+from src.loader import build_real_dataset, parse_dataset_config
 from src.solvers_temporal import solve_joint_spacetime_cvxpy
 
 
@@ -60,11 +60,54 @@ from src.solvers_temporal import solve_joint_spacetime_cvxpy
 # Fold definitions
 # ---------------------------------------------------------------------------
 
-FOLDS = [
-    {"fold": 1, "train_month_end": 47,  "val_start": 48, "val_end": 59},
-    {"fold": 2, "train_month_end": 59,  "val_start": 60, "val_end": 71},
-    {"fold": 3, "train_month_end": 71,  "val_start": 72, "val_end": 82},
-]
+def compute_folds(n_epochs: int) -> list[dict]:
+    """
+    Compute forward-chaining fold boundaries from the total number of epochs.
+
+    Uses a three-fold scheme: 60% / 20% / 20% split (approximate), with a
+    minimum of 6 epochs per fold.  The validation windows are non-overlapping
+    and contiguous.
+
+    Parameters
+    ----------
+    n_epochs : int
+        Total number of monthly epochs in the dataset.
+
+    Returns
+    -------
+    list of dict, each with keys:
+        fold (int), train_month_end (int), val_start (int), val_end (int)
+    """
+    if n_epochs < 12:
+        raise ValueError(
+            f"Dataset has only {n_epochs} epochs. Need at least 12 for 3-fold CV."
+        )
+    # Each validation window is ~13% of total epochs, minimum 6 months.
+    val_len = max(6, n_epochs // 8)
+    # Fold 3: last val_len epochs
+    f3_end = n_epochs - 1
+    f3_start = f3_end - val_len + 1
+    # Fold 2: immediately before fold 3
+    f2_end = f3_start - 1
+    f2_start = f2_end - val_len + 1
+    # Fold 1: immediately before fold 2
+    f1_end = f2_start - 1
+    f1_start = f1_end - val_len + 1
+    if f1_start < 1:
+        raise ValueError(
+            f"Dataset has only {n_epochs} epochs. Cannot build 3 non-overlapping "
+            "folds with sufficient training data. Reduce val_len or add more epochs."
+        )
+    return [
+        {"fold": 1, "train_month_end": f1_start - 1, "val_start": f1_start, "val_end": f1_end},
+        {"fold": 2, "train_month_end": f2_start - 1, "val_start": f2_start, "val_end": f2_end},
+        {"fold": 3, "train_month_end": f3_start - 1, "val_start": f3_start, "val_end": f3_end},
+    ]
+
+
+# Module-level fallback for backward compatibility (84-epoch real dataset).
+# Replaced at runtime inside main() by compute_folds(n_epochs).
+FOLDS = compute_folds(84)
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +137,7 @@ def compute_depth_weights(
 
 
 def run_training_fold(
+    config_path: Path | None,
     data_dir: Path,
     train_month_end: int,
     lam: float,
@@ -116,7 +160,9 @@ def run_training_fold(
     depth_weights_train : np.ndarray, shape (n_stations, n_layers)
     meta : dict  (includes station_names, valid_depths_m, x_twd97, y_twd97, ...)
     """
+    dataset_kwargs = parse_dataset_config(config_path)
     dataset, config, meta = build_real_dataset(
+        **dataset_kwargs,
         data_dir=data_dir,
         month_start=0,
         month_end=train_month_end,
@@ -429,6 +475,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Forward chaining temporal cross-validation.")
     p.add_argument("--data-dir", default="my_input_data/", type=Path)
     p.add_argument("--output-dir", default="output/cv_temporal/", type=Path)
+    p.add_argument("--config", default=None, type=Path, help="Path to pipeline_config.ini")
     p.add_argument("--lam", default=0.01, type=float)
     p.add_argument("--lam-t", default=0.3, type=float)
     p.add_argument("--sigma-insar", default=3.0, type=float)
@@ -444,17 +491,24 @@ def main() -> None:
     if not args.no_plots:
         plots_dir.mkdir(parents=True, exist_ok=True)
 
+    # Auto-detect number of epochs and recompute fold boundaries.
+    _sample_csv = next((args.data_dir / "CSV_files").glob("*_insar_mlcw.csv"))
+    _sample_df = pd.read_csv(_sample_csv)
+    _n_epochs = len([c for c in _sample_df.columns if c.startswith("Month_")])
+    folds = compute_folds(_n_epochs)
+    print(f"Detected {_n_epochs} epochs. Fold boundaries: {folds}")
+
     all_per_layer: list[pd.DataFrame] = []
     all_per_station: list[pd.DataFrame] = []
     fold_summaries: list[dict] = []
 
     # Arrays for NPZ (pad to max val length with NaN)
-    max_val_len = max(f["val_end"] - f["val_start"] + 1 for f in FOLDS)
+    max_val_len = max(f["val_end"] - f["val_start"] + 1 for f in folds)
 
     pred_store: list[np.ndarray] = []
     true_store: list[np.ndarray] = []
 
-    for fold_def in FOLDS:
+    for fold_def in folds:
         fold_id = fold_def["fold"]
         train_end = fold_def["train_month_end"]
         val_start = fold_def["val_start"]
@@ -468,6 +522,7 @@ def main() -> None:
         # ── Stage 1: train inversion ───────────────────────────────────────
         print("  Running Stage 1 inversion on training period ...")
         depth_weights, meta = run_training_fold(
+            config_path=args.config,
             data_dir=args.data_dir,
             train_month_end=train_end,
             lam=args.lam,
@@ -493,8 +548,8 @@ def main() -> None:
             val_month_end=val_end,
         )
         # Fraction of non-NaN entries
-        valid_frac_insar = float(~np.isnan(insar_val_inc).mean())
-        valid_frac_mlcw = float(~np.isnan(mlcw_val_inc).mean())
+        valid_frac_insar = float((~np.isnan(insar_val_inc)).mean())
+        valid_frac_mlcw = float((~np.isnan(mlcw_val_inc)).mean())
         print(f"  InSAR valid: {valid_frac_insar*100:.1f}%  "
               f"MLCW valid: {valid_frac_mlcw*100:.1f}%")
 

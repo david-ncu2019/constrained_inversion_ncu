@@ -61,7 +61,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.loader import build_real_dataset
+from src.loader import build_real_dataset, parse_dataset_config
 from src.solvers_temporal import (
     solve_independent_epochs,
     solve_joint_spacetime,
@@ -97,6 +97,7 @@ def parse_args() -> argparse.Namespace:
              "Not recommended: the inequality constraint is unreliable in incremental space.",
     )
     p.add_argument("--output-dir", default="output/", type=Path)
+    p.add_argument("--config", default=None, type=Path, help="Path to pipeline_config.ini")
     return p.parse_args()
 
 
@@ -108,6 +109,7 @@ def main() -> None:
     cumulate = not args.no_cumulate
     print("Loading real data from:", args.data_dir)
     print(f"  Displacement space: {'cumulative' if cumulate else 'incremental (monthly)'}")
+    dataset_kwargs = parse_dataset_config(args.config)
     dataset, config, meta = build_real_dataset(
         data_dir=args.data_dir,
         month_start=args.month_start,
@@ -117,6 +119,7 @@ def main() -> None:
         sigma_insar=args.sigma_insar,
         sigma_well=args.sigma_well,
         cumulate=cumulate,
+        **dataset_kwargs
     )
 
     n_stations = config.n_pixels   # = grid_rows * grid_cols = 31 for real data
