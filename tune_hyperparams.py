@@ -88,6 +88,7 @@ def evaluate_one_config(
     sigma_insar: float = 3.0,
     sigma_well: float = 1.0,
     fold3_def: dict | None = None,
+    config_path: Path | None = None,
 ) -> dict:
     """
     Evaluate one (lam, lam_t) pair using fold 3 temporal CV.
@@ -113,6 +114,7 @@ def evaluate_one_config(
 
     # ── Stage 1: training inversion ───────────────────────────────────────
     depth_weights, meta = run_training_fold(
+        config_path=config_path,
         data_dir=data_dir,
         train_month_end=train_end,
         lam=lam,
@@ -283,6 +285,7 @@ def main() -> None:
             sigma_insar=args.sigma_insar,
             sigma_well=args.sigma_well,
             fold3_def=fold3_def,
+            config_path=args.config,
         )
         print(
             f"mean RMSE = {result['mean_rmse_mm']:.3f} mm  "

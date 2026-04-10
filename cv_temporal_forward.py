@@ -137,13 +137,13 @@ def compute_depth_weights(
 
 
 def run_training_fold(
-    config_path: Path | None,
     data_dir: Path,
     train_month_end: int,
     lam: float,
     lam_t: float,
     sigma_insar: float = 3.0,
     sigma_well: float = 1.0,
+    config_path: Path | None = None,
 ) -> tuple[np.ndarray, dict]:
     """
     Load training data and run inversion for one fold.

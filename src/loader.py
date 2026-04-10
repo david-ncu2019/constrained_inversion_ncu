@@ -60,7 +60,9 @@ def parse_dataset_config(config_path: Path | str | None) -> dict[str, Any]:
     ds = dict(cfg.items("Dataset"))
     str_keys = [
         "grid_metrics_file", "station_coords_file", "csv_dir_name", 
-        "csv_name_pattern", "x_col", "y_col", "depth_col", "month_col_prefix"
+        "csv_name_pattern", "x_col", "y_col", "depth_col", "month_col_prefix",
+        "nc_depth_dim", "x_dim", "y_dim", "time_dim", "time_label_var",
+        "displacement_var", "crs", "station_name_col"
     ]
     for k in str_keys:
         if k in ds: kwargs[k] = ds[k].strip()
@@ -137,6 +139,7 @@ def load_station_coords(
     y_coords: npt.NDArray[np.float64],
     x_col: str = "X_TWD97",
     y_col: str = "Y_TWD97",
+    name_col: str = "Ename",
 ) -> pd.DataFrame:
     """
     Load station coordinates and compute nearest-grid-point pixel indices.
@@ -238,6 +241,10 @@ def build_real_dataset(
     month_col_prefix: str = "Month_",
     insar_surface_depth: int = 0,
     min_insar_fraction: float = 0.50,
+    station_name_col: str = "Ename",
+    x_dim: str = "X",
+    y_dim: str = "Y",
+    nc_depth_dim: str = "Depth",
 ) -> tuple[SyntheticDataset, SystemConfig, dict[str, Any]]:
     """
     Load real CRFP monitoring data into a SyntheticDataset for inversion.
@@ -299,13 +306,13 @@ def build_real_dataset(
     csv_dir = data_dir / csv_dir_name
 
     # ── 1. Spatial grid metadata from NetCDF template ────────────────────
-    grid = get_grid_specs(nc_path)
+    grid = get_grid_specs(nc_path, x_dim=x_dim, y_dim=y_dim, depth_dim=nc_depth_dim)
     x_coords: npt.NDArray[np.float64] = grid["x_coords"]
     y_coords: npt.NDArray[np.float64] = grid["y_coords"]
 
     # ── 2. Station coordinates → nearest output-grid pixel ───────────────
-    stations = load_station_coords(coords_path, x_coords, y_coords, x_col=x_col, y_col=y_col)
-    station_names: list[str] = stations["Ename"].tolist()
+    stations = load_station_coords(coords_path, x_coords, y_coords, x_col=x_col, y_col=y_col, name_col=station_name_col)
+    station_names: list[str] = stations[station_name_col].tolist()
 
     # ── 2b. Exclude stations with insufficient InSAR temporal coverage ────
     # Stations with < 50% valid InSAR months are excluded: boundary-clamping
@@ -330,8 +337,8 @@ def build_real_dataset(
                  if c < min_insar_fraction * _n_total_months]
     if _excluded:
         print(f"[loader] Excluding {len(_excluded)} stations with < {int(min_insar_fraction*100)}% InSAR coverage: {_excluded}")
-    stations = stations[~stations["Ename"].isin(_excluded)].reset_index(drop=True)
-    station_names = stations["Ename"].tolist()
+    stations = stations[~stations[station_name_col].isin(_excluded)].reset_index(drop=True)
+    station_names = stations[station_name_col].tolist()
     n_stations = len(stations)
 
     # ── 3. Valid MLCW depth levels ────────────────────────────────────────
@@ -375,7 +382,7 @@ def build_real_dataset(
     w_matrix = np.full((n_stations * n_layers, n_epochs), np.nan)
 
     for s_idx, (_, srow) in enumerate(stations.iterrows()):
-        name = str(srow["Ename"])
+        name = str(srow[station_name_col])
         csv_path = csv_dir / csv_name_pattern.format(name=name)
         if not csv_path.exists():
             continue
