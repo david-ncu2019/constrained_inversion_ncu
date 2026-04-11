@@ -17,6 +17,7 @@ dependencies = [
     "netcdf4>=1.7.0",
     "cvxpy>=1.4",
     "scikit-learn>=1.4",
+    "optuna>=4.8.0",
 ]
 
 [tool.pytest.ini_options]
