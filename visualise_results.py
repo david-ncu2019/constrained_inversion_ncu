@@ -76,11 +76,12 @@ def resolve_paths(args: argparse.Namespace) -> dict:
         "cv_temporal_dir": vis / "cv_temporal",
         "maps_dir": vis / "maps",
         "profiles_dir": vis / "profiles",
+        "timeseries_dir": vis / "timeseries",
     }
 
 
 def _makedirs(paths: dict) -> None:
-    for key in ("inversion_dir", "cv_spatial_dir", "cv_temporal_dir", "maps_dir", "profiles_dir"):
+    for key in ("inversion_dir", "cv_spatial_dir", "cv_temporal_dir", "maps_dir", "profiles_dir", "timeseries_dir"):
         paths[key].mkdir(parents=True, exist_ok=True)
 
 
@@ -606,6 +607,88 @@ def plot_maps(ds, npz: Dict[str, Any], map_month: Optional[int], paths: Dict[str
 # ---------------------------------------------------------------------------
 
 
+def plot_station_timeseries_func(npz: dict, paths: dict, data_dir: Path, dpi: int) -> None:
+    from src.loader import build_real_dataset
+    
+    m_est = np.array(npz["m_est"], dtype=float)
+    station_names = npz["station_names"].astype(str)
+    valid_depths_m = npz["valid_depths_m"]
+    
+    n_epochs, n_stations, n_layers = m_est.shape
+    
+    print("  Loading real dataset for observations...")
+    dataset, _, _ = build_real_dataset(
+        data_dir=data_dir,
+        grid_metrics_file='grid_pnt_CRFP_500m_vert_IDW_v1.nc',
+        cumulate=True
+    )
+    
+    w_obs = dataset.w.reshape(n_epochs, n_stations, n_layers)
+    out_dir = paths["timeseries_dir"]
+    epochs = np.arange(n_epochs)
+    
+    for s_idx, station_name in enumerate(station_names):
+        max_subplots = 30
+        n_figs = int(np.ceil(n_layers / max_subplots))
+        
+        for fig_idx in range(n_figs):
+            start_l = fig_idx * max_subplots
+            end_l = min((fig_idx + 1) * max_subplots, n_layers)
+            n_layers_fig = end_l - start_l
+            
+            n_cols = min(5, n_layers_fig)
+            n_rows = int(np.ceil(n_layers_fig / n_cols))
+            
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 3, n_rows * 2.5), squeeze=False)
+            fig.suptitle(f'Station: {station_name} (Layers {start_l+1}-{end_l})', fontsize=16)
+            
+            axes_flat = axes.flatten()
+            
+            for i, l_idx in enumerate(range(start_l, end_l)):
+                ax = axes_flat[i]
+                
+                pred = m_est[:, s_idx, l_idx]
+                obs = w_obs[:, s_idx, l_idx]
+                depth = valid_depths_m[l_idx]
+                
+                ax.plot(epochs, pred, label='Predicted', color='blue', linewidth=2)
+                
+                has_obs = not np.allclose(obs, 0.0)
+                if has_obs:
+                    ax.plot(epochs, obs, label='Observed', color='orange', linestyle='--', linewidth=2)
+                    rmse = np.sqrt(np.mean((pred - obs)**2))
+                    mae = np.mean(np.abs(pred - obs))
+                    metrics_txt = f"RMSE: {rmse:.2f}\\nMAE: {mae:.2f}"
+                else:
+                    metrics_txt = "No observations"
+                    
+                ax.set_title(f'Depth: {depth} m')
+                ax.set_xlabel('Epoch (months)')
+                ax.set_ylabel('Compaction (mm)')
+                ax.grid(True, linestyle=':', alpha=0.6)
+                
+                ax.text(0.05, 0.95, metrics_txt, transform=ax.transAxes, 
+                        fontsize=9, verticalalignment='top', 
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+                
+            for i in range(n_layers_fig, len(axes_flat)):
+                fig.delaxes(axes_flat[i])
+                
+            handles, labels = axes_flat[0].get_legend_handles_labels()
+            if handles:
+                fig.legend(handles, labels, loc='lower center', ncol=2, bbox_to_anchor=(0.5, 0.0))
+            
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.9, bottom=0.1)
+            
+            suffix = f"_{fig_idx+1}" if n_figs > 1 else ""
+            fig_path = out_dir / f"{station_name.replace('/', '_').replace(' ', '_')}_timeseries{suffix}.png"
+            fig.savefig(fig_path, dpi=dpi)
+            plt.close(fig)
+            
+    print(f"  Saved timeseries plots to {out_dir}")
+
+
 def plot_profiles(
     ds,
     npz: dict,
@@ -684,6 +767,10 @@ def parse_args() -> argparse.Namespace:
                    help="Figure DPI (default: 120).")
     p.add_argument("--no-maps", action="store_true", default=False,
                    help="Skip map plots (skips loading the large NetCDF).")
+    p.add_argument("--plot-station-timeseries", action="store_true", default=False,
+                   help="Plot observations vs predictions per station.")
+    p.add_argument("--data-dir", default="my_input_data/", type=Path,
+                   help="Input data directory to load observations for timeseries.")
     return p.parse_args()
 
 
@@ -731,6 +818,10 @@ def main() -> None:
 
     print("\n[3/5] Temporal CV plots...")
     plot_temporal_cv(paths, args.dpi)
+
+    if args.plot_station_timeseries:
+        print("\n[3.5/5] Station timeseries plots...")
+        plot_station_timeseries_func(npz, paths, args.data_dir, args.dpi)
 
     if not args.no_maps:
         print("\n[4/5] Grid map plots (loading NetCDF)...")
