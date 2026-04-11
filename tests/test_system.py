@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from scipy.sparse import csr_array
+from scipy.sparse import csr_matrix
 
 from src.config import SystemConfig
 from src.system import build_G_matrix, build_I_wells, build_L_matrix
@@ -15,7 +15,7 @@ def test_build_G_matrix(config: SystemConfig) -> None:
     G = build_G_matrix(config)
 
     # Check type and shape
-    assert isinstance(G, csr_array)
+    assert isinstance(G, csr_matrix)
     assert G.shape == (100, 500)
 
     # Each row should sum to n_layers * delta_z (layer thickness weighted sum)
@@ -40,7 +40,7 @@ def test_build_I_wells(config: SystemConfig) -> None:
     I_w = build_I_wells(config)
 
     # Check type and shape
-    assert isinstance(I_w, csr_array)
+    assert isinstance(I_w, csr_matrix)
     assert I_w.shape == (25, 500)
 
     # Each row should have exactly 1 one
@@ -58,7 +58,7 @@ def test_build_L_matrix(config: SystemConfig) -> None:
     L = build_L_matrix(config)
 
     # Check type and shape
-    assert isinstance(L, csr_array)
+    assert isinstance(L, csr_matrix)
     assert L.shape == (499, 500)
 
     # Check first row [1, -1, 0, ...]
