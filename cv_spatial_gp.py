@@ -198,6 +198,10 @@ def run_loso_fold(
     full_depth_weights: np.ndarray,
     exclude_idx: int,
     n_gp_restarts: int = 10,
+    interp_mode: str = "gp",
+    max_anisotropy: Optional[float] = None,
+    k_trials: int = 50,
+    k_splits: int = 5,
 ) -> Dict[str, Any]:
     """
     Run one LOSO fold for station ``exclude_idx``.
@@ -211,6 +215,10 @@ def run_loso_fold(
         Reference weights from the full-data inversion.
     exclude_idx  : int
     n_gp_restarts : int
+    interp_mode   : str
+    max_anisotropy: float or None
+    k_trials      : int
+    k_splits      : int
 
     Returns
     -------
@@ -219,10 +227,8 @@ def run_loso_fold(
       mean_pred (n_layers,), std_pred (n_layers,),
       true_weight (n_layers,),
       error (n_layers,),       # mean_pred - true_weight
-      insar_coverage_sub,      # float — coverage at the held-out station
-                               # computed from the sub-inversion (diagnostic)
     """
-    from stage2_gp_interpolation import fit_gp_per_layer
+    from stage2_gp_interpolation import fit_spatial_model_per_layer
 
     n_epochs = full_config.n_epochs
     n_layers = full_config.n_layers
@@ -234,11 +240,24 @@ def run_loso_fold(
     n_sub = sub_config.n_pixels
 
     # ── Run Stage 1 on n-1 stations ───────────────────────────────────────
-    m_flat_sub = solve_joint_spacetime_cvxpy(
-        sub_dataset,
-        x_twd97=sub_meta["x_twd97"],
-        y_twd97=sub_meta["y_twd97"],
-    )
+    dataset_kwargs = parse_dataset_config(config_path)
+    inversion_kwargs = parse_inversion_config(config_path)
+    solver_choice = inversion_kwargs.get("solver", "cvxpy").lower()
+
+    if solver_choice == "cvxpy":
+        from src.solvers_temporal import solve_joint_spacetime_cvxpy
+        m_flat_sub = solve_joint_spacetime_cvxpy(
+            sub_dataset,
+            x_twd97=sub_meta["x_twd97"],
+            y_twd97=sub_meta["y_twd97"],
+        )
+    elif solver_choice == "joint":
+        from src.solvers_temporal import solve_joint_spacetime
+        m_flat_sub = solve_joint_spacetime(sub_dataset)
+    else:
+        # Fallback/independent
+        from src.solvers_temporal import solve_independent_epochs
+        m_flat_sub = solve_independent_epochs(sub_dataset)
 
     depth_weights_sub, _ = compute_depth_weights(
         m_flat_sub, sub_dataset.d_insar, n_epochs, n_sub, n_layers
@@ -250,13 +269,17 @@ def run_loso_fold(
     x_pred_km = np.array([full_meta["x_twd97"][exclude_idx]]) / 1000.0
     y_pred_km = np.array([full_meta["y_twd97"][exclude_idx]]) / 1000.0
 
-    mean_pred_2d, std_pred_2d, _ = fit_gp_per_layer(
+    mean_pred_2d, std_pred_2d, _ = fit_spatial_model_per_layer(
         depth_weights=depth_weights_sub,
         x_train_km=x_train_km,
         y_train_km=y_train_km,
         x_pred_km=x_pred_km,
         y_pred_km=y_pred_km,
+        interp_mode=interp_mode,
         n_restarts=n_gp_restarts,
+        max_anisotropy=max_anisotropy,
+        k_trials=k_trials,
+        k_splits=k_splits,
     )
     # mean_pred_2d: (n_layers, 1); flatten to (n_layers,)
     mean_pred = mean_pred_2d[:, 0]
@@ -359,6 +382,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-restarts", default=10, type=int)
     p.add_argument("--sigma-insar", default=3.0, type=float)
     p.add_argument("--sigma-well", default=1.0, type=float)
+    
+    # New spatial interpolation args
+    p.add_argument("--interp-mode", default="gp", choices=["gp", "kriging"])
+    p.add_argument("--max-anisotropy", default=None, type=float)
+    p.add_argument("--k-trials", default=50, type=int)
+    p.add_argument("--k-splits", default=5, type=int)
+    
     return p.parse_args()
 
 
@@ -368,6 +398,16 @@ def main() -> None:
 
     # ── Load full dataset (once) ──────────────────────────────────────────
     print(f"Loading full dataset from: {args.data_dir}")
+    dataset_kwargs = parse_dataset_config(args.config)
+    
+    # Filter out keys that are passed explicitly as arguments
+    # to avoided duplicated keyword argument error
+    explicit_args = {
+        "data_dir", "month_start", "month_end", "lam", "lam_t", 
+        "sigma_insar", "sigma_well", "cumulate"
+    }
+    filtered_kwargs = {k: v for k, v in dataset_kwargs.items() if k not in explicit_args}
+
     full_dataset, full_config, full_meta = build_real_dataset(
         data_dir=args.data_dir,
         month_start=0,
@@ -377,6 +417,7 @@ def main() -> None:
         sigma_insar=args.sigma_insar,
         sigma_well=args.sigma_well,
         cumulate=True,
+        **filtered_kwargs
     )
     n_stations = full_config.n_pixels
     n_layers = full_config.n_layers
@@ -406,12 +447,13 @@ def main() -> None:
         print(f"  Fold {i+1:2d}/{n_stations}: excluding {name} ... ", end="", flush=True)
         t0 = time.perf_counter()
         fold_result = run_loso_fold(
-            full_dataset=full_dataset,
-            full_config=full_config,
-            full_meta=full_meta,
-            full_depth_weights=full_depth_weights,
-            exclude_idx=i,
+            full_dataset, full_config, full_meta,
+            full_depth_weights, i,
             n_gp_restarts=args.n_restarts,
+            interp_mode=args.interp_mode,
+            max_anisotropy=args.max_anisotropy,
+            k_trials=args.k_trials,
+            k_splits=args.k_splits
         )
         elapsed = time.perf_counter() - t0
         total_col_rmse = float(np.abs(fold_result["error"].sum()))
