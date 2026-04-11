@@ -56,6 +56,9 @@ import xarray as xr
 from tqdm import tqdm
 from typing import Optional, List, Dict, Tuple, Any
 
+import matplotlib
+matplotlib.use("Agg")
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -114,15 +117,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grid-resolution-m", default=None, type=float)
     p.add_argument("--crs", default="EPSG:3826 (TWD97 TM2)", type=str)
 
-    # Anisotropy configurations
+    # Spatial Interpolation configurations
+    p.add_argument("--interp-mode", default="gp", choices=["gp", "kriging"],
+                   help="Select interpolation method: 'gp' (Gaussian Process) or 'kriging' (Ordinary Kriging).")
+    
+    # Anisotropy configurations (mostly for GP)
     p.add_argument("--gp-mode", default="isotropic", choices=["isotropic", "anisotropic"],
                    help="Set to 'anisotropic' to use RotatedGPR.")
     p.add_argument("--angle-search", default="bounded", choices=["bounded", "global"],
                    help="Search method for rotation angle.")
     p.add_argument("--max-anisotropy", default=None, type=float,
-                   help="Limit maximum anisotropy ratio (e.g., 5.0).")
+                   help="Limit maximum anisotropy ratio (e.g., 5.0 for GP, 3.0 for Kriging).")
     p.add_argument("--angle-min", default=0.0, type=float, help="Min rotation angle.")
     p.add_argument("--angle-max", default=180.0, type=float, help="Max rotation angle.")
+
+    # Kriging-specific configurations
+    p.add_argument("--k-trials", default=50, type=int, help="Optuna trials for Kriging parameter tuning.")
+    p.add_argument("--k-splits", default=5, type=int, help="Cross-validation splits for Kriging tuning.")
+    p.add_argument("--diag-dir", default="output/diagnostics_spatial", type=Path,
+                   help="Directory to save spatial diagnostics (variograms, etc.).")
 
     return p.parse_args()
 
@@ -220,12 +233,13 @@ def load_grid_insar(
         return disp, x_coords, y_coords, time_labels
 
 
-def fit_gp_per_layer(
+def fit_spatial_model_per_layer(
     depth_weights: np.ndarray,
     x_train_km: np.ndarray,
     y_train_km: np.ndarray,
     x_pred_km: np.ndarray,
     y_pred_km: np.ndarray,
+    interp_mode: str = "gp",
     n_restarts: int = 10,
     gp_length_scale: float = 5.0,
     gp_length_scale_min: float = 0.01,
@@ -237,6 +251,9 @@ def fit_gp_per_layer(
     angle_search: str = "bounded",
     max_anisotropy: Optional[float] = None,
     angle_bounds: Tuple[float, float] = (0, 180),
+    k_trials: int = 50,
+    k_splits: int = 5,
+    diag_dir: Optional[Path] = None,
 ) -> Tuple[np.ndarray, np.ndarray, List[Dict[str, Any]]]:
     """
     Fit independent GPs for each depth layer and predict at grid pixels.
@@ -273,7 +290,8 @@ def fit_gp_per_layer(
     std_grid = np.full((n_layers, n_pixels), np.nan)
     anisotropy_params = []
 
-    for l in tqdm(range(n_layers), desc="GP fitting per layer", unit="layer"):
+    method_label = "Kriging" if interp_mode == "kriging" else "GP"
+    for l in tqdm(range(n_layers), desc=f"{method_label} fitting per layer", unit="layer"):
         y_train = depth_weights[:, l]
 
         # Skip layers where all weights are zero (no compaction signal)
@@ -283,7 +301,15 @@ def fit_gp_per_layer(
             anisotropy_params.append({"layer": l, "status": "all_zeros"})
             continue
 
-        if gp_mode == "anisotropic":
+        if interp_mode == "kriging":
+            from src.spatial_solvers import AnisotropicKriging
+            model = AnisotropicKriging(
+                n_trials=k_trials,
+                n_splits=k_splits,
+                max_anisotropy=max_anisotropy if max_anisotropy else 3.0,
+                random_state=42,
+            )
+        elif gp_mode == "anisotropic":
             # For rotated GPR, we need the Matern kernel to have separate length scales for 2D
             kernel = (
                 C(1.0, (1e-3, 1e3)) *
@@ -301,7 +327,7 @@ def fit_gp_per_layer(
                 random_state=42
             )
         else:
-            # Standard Isotropic
+            # Standard Isotropic GP
             kernel = (
                 Matern(nu=2.5, length_scale=gp_length_scale, 
                        length_scale_bounds=(gp_length_scale_min, gp_length_scale_max))
@@ -316,11 +342,19 @@ def fit_gp_per_layer(
             )
 
         model.fit(X_train, y_train)
+        
+        # Diagnostics for Kriging
+        if interp_mode == "kriging" and diag_dir:
+            diag_dir_path = Path(diag_dir) if not isinstance(diag_dir, Path) else diag_dir
+            diag_dir_path.mkdir(parents=True, exist_ok=True)
+            model.save_diagnostics(str(diag_dir_path), l)
+            
         mu, sigma = model.predict(X_pred, return_std=True)
         mean_grid[l] = mu
         std_grid[l] = sigma
         
-        if gp_mode == "anisotropic":
+        # Collect params for reporting
+        if interp_mode == "kriging" or gp_mode == "anisotropic":
             p = model.get_kernel_params()
             p["layer"] = l
             anisotropy_params.append(p)
@@ -629,6 +663,13 @@ def build_output_dataset(
                     "units": "mm",
                 },
             ),
+            "month_label": xr.DataArray(
+                time_labels,
+                dims=["time"],
+                attrs={
+                    "long_name": "Original month identifier",
+                },
+            ),
             **(
                 {
                     "compaction_total_std": xr.DataArray(
@@ -651,10 +692,26 @@ def build_output_dataset(
             ),
         },
         coords={
-            "X": xr.DataArray(x_coords, dims=["X"], attrs={"units": "m", "crs": crs}),
-            "Y": xr.DataArray(y_coords, dims=["Y"], attrs={"units": "m", "crs": crs}),
-            "layer": xr.DataArray(depths_coord, dims=["layer"], attrs={"units": "m", "long_name": "Depth (top of layer)"}),
-            "time": xr.DataArray(time_labels, dims=["time"]),
+            "X": xr.DataArray(x_coords, dims=["X"], attrs={"units": "m", "axis": "X"}),
+            "Y": xr.DataArray(y_coords, dims=["Y"], attrs={"units": "m", "axis": "Y"}),
+            "layer": xr.DataArray(
+                depths_coord,
+                dims=["layer"],
+                attrs={
+                    "units": "m",
+                    "long_name": "Depth (top of layer)",
+                    "axis": "Z",
+                    "positive": "down",
+                },
+            ),
+            "time": xr.DataArray(
+                np.arange(n_time, dtype=np.float32) * 30.0,
+                dims=["time"],
+                attrs={
+                    "units": "days since 2015-01-01",
+                    "axis": "T",
+                },
+            ),
         },
         attrs={
             "description": "GP-interpolated depth weights and layer-wise compaction predictions",
@@ -690,7 +747,7 @@ def main() -> None:
     apply_cumsum = not args.no_cumsum
     print(f"\nLoading grid InSAR from: {args.grid_nc}")
     print(f"  Apply cumsum to InSAR: {apply_cumsum}")
-    insar_cum, x_coords, y_coords, time_labels = load_grid_insar(
+    insar_cum_full, x_coords, y_coords, time_labels_full = load_grid_insar(
         args.grid_nc, apply_cumsum=apply_cumsum,
         displacement_var=args.displacement_var,
         insar_depth_dim=args.insar_depth_dim,
@@ -700,8 +757,14 @@ def main() -> None:
         time_dim=args.time_dim,
         time_label_var=args.time_label_var,
     )
+    
+    # ── Slice to match inversion time scope ──────────────────────────────
+    n_time_inversion = len(month_labels)
+    insar_cum = insar_cum_full[:n_time_inversion, :, :]
+    time_labels = time_labels_full[:n_time_inversion]
     n_time, n_y, n_x = insar_cum.shape
     n_pixels = n_y * n_x
+    print(f"  Sliced grid InSAR to {n_time} epochs to match inversion results.")
     print(f"  Grid shape: {n_y} × {n_x} = {n_pixels} pixels, {n_time} time steps")
 
     # ── Identify pixels with any valid InSAR coverage ────────────────────
@@ -717,14 +780,20 @@ def main() -> None:
     x_train_km = x_twd97 / 1000.0
     y_train_km = y_twd97 / 1000.0
 
-    # ── Fit GPs per layer ─────────────────────────────────────────────────
-    print(f"\nFitting {n_layers} GPs (n_restarts={args.n_restarts}, mode={args.gp_mode}) ...")
-    mean_valid, std_valid, anisotropy_params = fit_gp_per_layer(
+    # ── Fit spatial models per layer ──────────────────────────────────────
+    print(f"\nFitting {n_layers} models (interp_mode={args.interp_mode}) ...")
+    if args.interp_mode == "gp":
+        print(f"  GP settings: n_restarts={args.n_restarts}, mode={args.gp_mode}")
+    else:
+        print(f"  Kriging settings: n_trials={args.k_trials}, n_splits={args.k_splits}")
+
+    mean_valid, std_valid, anisotropy_params = fit_spatial_model_per_layer(
         depth_weights=depth_weights,
         x_train_km=x_train_km,
         y_train_km=y_train_km,
         x_pred_km=x_all_km,
         y_pred_km=y_all_km,
+        interp_mode=args.interp_mode,
         n_restarts=args.n_restarts,
         gp_length_scale=args.gp_length_scale,
         gp_length_scale_min=args.gp_length_scale_min,
@@ -736,6 +805,9 @@ def main() -> None:
         angle_search=args.angle_search,
         max_anisotropy=args.max_anisotropy,
         angle_bounds=(args.angle_min, args.angle_max),
+        k_trials=args.k_trials,
+        k_splits=args.k_splits,
+        diag_dir=args.diag_dir,
     )
     # mean_valid, std_valid: (n_layers, n_valid_pixels)
 
