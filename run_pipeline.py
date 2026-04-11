@@ -55,6 +55,13 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Dict, Tuple
 
+# Use non-interactive backend for all plots
+import matplotlib
+matplotlib.use("Agg")
+
+# Import month-end auto-detection
+from src.loader import get_max_available_month
+
 
 # ---------------------------------------------------------------------------
 # Config loading
@@ -216,18 +223,20 @@ def run_stage(
 # ---------------------------------------------------------------------------
 
 
-def select_best_params(tuning_csv: Path) -> Tuple[float, float]:
+def select_best_params(tuning_dir: Path) -> Tuple[float, float]:
     """
-    Read hyperparam_results_full.csv and return (lam, lam_t) with lowest mean_rmse_mm.
-
-    Parameters
-    ----------
-    tuning_csv : Path
-
-    Returns
-    -------
-    (lam, lam_t) : tuple[float, float]
+    Read results from tuning and return (lam, lam_t).
+    Supports both legacy grid search (CSV) and Optuna (txt).
     """
+    optuna_best = tuning_dir / "best_params_optuna.txt"
+    if optuna_best.exists():
+        lines = {
+            k.strip(): float(v.strip())
+            for k, v in (line.split("=") for line in optuna_best.read_text().splitlines() if "=" in line)
+        }
+        return lines["lam"], lines["lam_t"]
+
+    tuning_csv = tuning_dir / "hyperparam_results_full.csv"
     df = pd.read_csv(tuning_csv)
     best_row = df.loc[df["mean_rmse_mm"].idxmin()]
     return float(best_row["lam"]), float(best_row["lam_t"])
@@ -276,6 +285,33 @@ def generate_summary(
         f"  lam_t = {best_lam_t}",
         "",
     ]
+
+    # Inversion Results (Coverage)
+    inv_npz = paths["inversion_npz"]
+    if inv_npz.exists():
+        try:
+            data = np.load(inv_npz)
+            if "insar_coverage" in data:
+                cov = data["insar_coverage"]
+                mean_c = np.mean(cov)
+                med_c = np.median(cov)
+                p25_c = np.percentile(cov, 25)
+                p75_c = np.percentile(cov, 75)
+                min_c = np.min(cov)
+                max_c = np.max(cov)
+                lines += [
+                    "0–300 m coverage fraction (last epoch):",
+                    f"  Mean   : {mean_c * 100:.1f}%",
+                    f"  Median : {med_c * 100:.1f}%",
+                    f"  25%    : {p25_c * 100:.1f}%",
+                    f"  75%    : {p75_c * 100:.1f}%",
+                    f"  Min    : {min_c * 100:.1f}%",
+                    f"  Max    : {max_c * 100:.1f}%",
+                    f"  (Residual {(1 - mean_c) * 100:.1f}% of surface signal originates below 300 m)",
+                    "",
+                ]
+        except Exception as e:
+            logger.warning(f"Could not load inversion coverage from {inv_npz}: {e}")
 
     # Tuning metrics
     tuning_csv: Path = paths["tuning_csv"]
@@ -476,6 +512,29 @@ def main() -> None:
     month_start = cfg.getint("Inversion",   "month_start", fallback=0)
     month_end_raw = cfg.get("Inversion",    "month_end",   fallback="").strip()
 
+    # ── Auto-detect available month range (for informational logging only) ──
+    # Read the maximum available month from input CSV data.
+    # This does NOT force any value; it's just for user awareness.
+    try:
+        max_available_month = get_max_available_month(
+            paths["data_dir"],
+            csv_dir_name=cfg.get("Dataset", "csv_dir_name", fallback="CSV_files"),
+            csv_name_pattern=cfg.get("Dataset", "csv_name_pattern", fallback="{name}_insar_mlcw.csv"),
+            month_col_prefix=cfg.get("Dataset", "month_col_prefix", fallback="Month_")
+        )
+        logger.info(f"[INFO] Available data: months 0–{max_available_month}")
+        if month_end_raw:
+            month_end = int(month_end_raw)
+            if month_end > max_available_month:
+                logger.warning(
+                    f"[WARN] Config month_end={month_end} exceeds available data (0–{max_available_month}). "
+                    f"This may cause errors in stages; please adjust config if needed."
+                )
+        else:
+            logger.info(f"[INFO] No month_end specified in config; stages will use their defaults.")
+    except Exception as e:
+        logger.warning(f"[WARN] Could not auto-detect month range: {e}")
+
     # GP config
     n_restarts    = cfg.getint("GP", "n_restarts",   fallback=10)
     std_threshold = cfg.getfloat("GP", "std_threshold", fallback=0.3)
@@ -485,13 +544,22 @@ def main() -> None:
     no_plots = cfg.getboolean("Report", "no_plots", fallback=False)
     make_plots_cfg = cfg.getboolean("Report", "make_plots", fallback=False)
     make_plots = args.make_plots or make_plots_cfg
+    plot_station_timeseries = cfg.getboolean("Report", "plot_station_timeseries", fallback=False)
 
-    # Anisotropy config
+    # Anisotropy/Interpolation config
+    interp_method  = cfg.get("SpatialInterpolation", "method", fallback="gp").lower()
+    
+    # GP settings
     gp_mode        = cfg.get("GP", "gp_mode",        fallback="isotropic")
     angle_search   = cfg.get("GP", "angle_search",   fallback="bounded")
-    max_anisotropy = cfg.get("GP", "max_anisotropy", fallback="").strip()
+    max_anisotropy_gp = cfg.get("GP", "max_anisotropy", fallback="").strip()
     angle_min      = cfg.getfloat("GP", "angle_min", fallback=0.0)
     angle_max      = cfg.getfloat("GP", "angle_max", fallback=180.0)
+    
+    # Kriging settings
+    kriging_trials = cfg.getint("Kriging", "n_trials", fallback=50)
+    kriging_splits = cfg.getint("Kriging", "n_splits", fallback=5)
+    max_anisotropy_kg = cfg.getfloat("Kriging", "max_anisotropy", fallback=3.0)
 
     # Tuning config
     lam_cands   = cfg.get("Tuning", "lam_candidates",   fallback="0.001,0.01,0.1")
@@ -527,30 +595,41 @@ def main() -> None:
             f"[SKIP] Stage 1 (Tuning) — using fixed lam={best_lam}, lam_t={best_lam_t}"
         )
     else:
-        tuning_skip_cond = paths["tuning_csv"] if not args.force else None
-        # Also need best_params.txt to exist for a valid skip
-        if (
-            not args.force
-            and paths["tuning_csv"].exists()
-            and paths["best_params"].exists()
-        ):
-            tuning_skip_cond = paths["tuning_csv"]  # already done
+        # Use Optuna if available/requested
+        optuna_script = Path("tune_hyperparams_optuna.py")
+        if optuna_script.exists():
+            tuning_script = "tune_hyperparams_optuna.py"
+            tuning_skip_cond = paths["tuning_dir"] / "best_params_optuna.txt"
+            n_trials = cfg.getint("Tuning", "n_trials", fallback=30)
+            cmd_tuning = [
+                python, tuning_script,
+                "--config",          str(args.config),
+                "--data-dir",        str(paths["data_dir"]),
+                "--output-dir",      str(paths["tuning_dir"]),
+                "--sigma-insar",     str(sigma_insar),
+                "--sigma-well",      str(sigma_well),
+                "--n-trials",        str(n_trials),
+            ]
         else:
+            tuning_script = "tune_hyperparams.py"
+            tuning_skip_cond = paths["tuning_csv"]
+            cmd_tuning = [
+                python, tuning_script,
+                "--config",          str(args.config),
+                "--data-dir",        str(paths["data_dir"]),
+                "--output-dir",      str(paths["tuning_dir"]),
+                "--sigma-insar",     str(sigma_insar),
+                "--sigma-well",      str(sigma_well),
+                "--lam-candidates",  lam_cands,
+                "--lam-t-candidates", lam_t_cands,
+                "--no-plot",
+            ]
+
+        if args.force:
             tuning_skip_cond = None
 
-        cmd_tuning = [
-            python, "tune_hyperparams.py",
-            "--config",          str(args.config),
-            "--data-dir",        str(paths["data_dir"]),
-            "--output-dir",      str(paths["tuning_dir"]),
-            "--sigma-insar",     str(sigma_insar),
-            "--sigma-well",      str(sigma_well),
-            "--lam-candidates",  lam_cands,
-            "--lam-t-candidates", lam_t_cands,
-            "--no-plot",
-        ]
         ran = run_stage(
-            name="Stage 1: Hyperparameter Tuning",
+            name=f"Stage 1: Hyperparameter Tuning ({tuning_script})",
             cmd=cmd_tuning,
             log_path=paths["logs_dir"] / "stage1_tuning.log",
             skip_if=tuning_skip_cond,
@@ -562,13 +641,15 @@ def main() -> None:
             stages_run.append("tuning")
 
         if not args.dry_run:
-            best_lam, best_lam_t = select_best_params(paths["tuning_csv"])
+            best_lam, best_lam_t = select_best_params(paths["tuning_dir"])
             write_best_params(paths["best_params"], best_lam, best_lam_t)
             logger.info(
                 f"       Auto-selected: lam={best_lam}, lam_t={best_lam_t}"
             )
         else:
             best_lam, best_lam_t = 0.01, 0.3   # placeholder for dry-run display
+
+    solver_choice = cfg.get("Inversion", "solver", fallback="cvxpy")
 
     # ════════════════════════════════════════════════════════════════════════
     # Stage 2: Inversion
@@ -583,7 +664,7 @@ def main() -> None:
         "--sigma-insar",  str(sigma_insar),
         "--sigma-well",   str(sigma_well),
         "--month-start",  str(month_start),
-        "--solver",       "cvxpy",
+        "--solver",       solver_choice,
     ]
     if month_end_raw:
         cmd_inversion += ["--month-end", month_end_raw]
@@ -615,7 +696,14 @@ def main() -> None:
             "--sigma-insar",    str(sigma_insar),
             "--sigma-well",     str(sigma_well),
             "--n-restarts",     str(n_gp_restarts),
+            "--interp-mode",    interp_method,
         ]
+        if interp_method == "kriging":
+            cmd_spatial_cv += [
+                "--k-trials", str(kriging_trials),
+                "--k-splits", str(kriging_splits),
+                "--max-anisotropy", str(max_anisotropy_kg),
+            ]
         ran = run_stage(
             name="Stage 3a: Spatial CV (LOSO)",
             cmd=cmd_spatial_cv,
@@ -671,13 +759,26 @@ def main() -> None:
         "--output-nc",     str(paths["gp_nc"]),
         "--n-restarts",    str(n_restarts),
         "--std-threshold", str(std_threshold),
-        "--gp-mode",       gp_mode,
-        "--angle-search",  angle_search,
-        "--angle-min",     str(angle_min),
-        "--angle-max",     str(angle_max),
+        "--interp-mode",    interp_method,
     ]
-    if max_anisotropy:
-        cmd_gp += ["--max-anisotropy", max_anisotropy]
+    
+    if interp_method == "gp":
+        cmd_gp += [
+            "--gp-mode",       gp_mode,
+            "--angle-search",  angle_search,
+            "--angle-min",     str(angle_min),
+            "--angle-max",     str(angle_max),
+        ]
+        if max_anisotropy_gp:
+            cmd_gp += ["--max-anisotropy", max_anisotropy_gp]
+    else:
+        cmd_gp += [
+            "--k-trials",       str(kriging_trials),
+            "--k-splits",       str(kriging_splits),
+            "--max-anisotropy", str(max_anisotropy_kg),
+            "--diag-dir",       str(paths["output_dir"] / "diagnostics_spatial"),
+        ]
+
     # Add CV CSV paths only if both exist (or will exist after stages 3a/3b)
     spatial_csv_exists = paths["spatial_csv"].exists() or (
         not skip_cv and run_spatial_cv and not args.dry_run
@@ -737,7 +838,10 @@ def main() -> None:
             python, "visualise_results.py",
             "--output-dir", str(paths["output_dir"]),
             "--vis-dir",    str(vis_dir),
+            "--data-dir",   str(paths["data_dir"]),
         ]
+        if plot_station_timeseries:
+            cmd_vis.append("--plot-station-timeseries")
         ran = run_stage(
             name="Stage 6: Visualisations",
             cmd=cmd_vis,
