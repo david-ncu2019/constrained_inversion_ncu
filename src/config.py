@@ -64,6 +64,17 @@ class SystemConfig:
     # and to select the correct temporal regularisation interpretation.
     cumulative_space: bool = True
 
+    # Flag to plot the timeseries of observations vs predictions per station.
+    plot_station_timeseries: bool = False
+
+    # Spatial Interpolation Configuration
+    # 'gp' (Gaussian Process) or 'kriging' (Ordinary Kriging)
+    interp_mode: str = "gp"
+    kriging_trials: int = 50
+    kriging_splits: int = 5
+    max_anisotropy_ratio: float = 3.0  # Constraint for anisotropy
+    diagnostics_dir: str = "output/diagnostics_spatial"
+
     @property
     def n_pixels(self) -> int:
         if self.grid_rows > 0 and self.grid_cols > 0:
