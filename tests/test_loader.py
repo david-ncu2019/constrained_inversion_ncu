@@ -17,7 +17,7 @@ DATA_DIR = Path("my_input_data")
 
 @pytest.fixture(scope="module")
 def grid_specs():  # type: ignore[return]
-    return get_grid_specs(DATA_DIR / "grid_pnt_datacube_500m.nc")
+    return get_grid_specs(DATA_DIR / "grid_pnt_CRFP_500m_vert_IDW_v1.nc")
 
 
 def test_get_grid_specs(grid_specs: dict) -> None:  # type: ignore[type-arg]
@@ -71,6 +71,7 @@ def test_build_real_dataset_shapes() -> None:
         DATA_DIR,
         month_start=0,
         month_end=None,  # load all available months
+        grid_metrics_file="grid_pnt_CRFP_500m_vert_IDW_v1.nc",
     )
 
     n_stations = config.n_pixels  # data-driven: actual station count from CSV files
