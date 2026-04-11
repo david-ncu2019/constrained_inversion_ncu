@@ -52,7 +52,7 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Dict, Any, Tuple
 
-from src.loader import build_real_dataset, parse_dataset_config
+from src.loader import build_real_dataset, parse_dataset_config, parse_inversion_config
 from src.solvers_temporal import solve_joint_spacetime_cvxpy
 
 
@@ -161,6 +161,8 @@ def run_training_fold(
     meta : dict  (includes station_names, valid_depths_m, x_twd97, y_twd97, ...)
     """
     dataset_kwargs = parse_dataset_config(config_path)
+    inversion_kwargs = parse_inversion_config(config_path)
+    
     dataset, config, meta = build_real_dataset(
         **dataset_kwargs,
         data_dir=data_dir,
@@ -172,11 +174,25 @@ def run_training_fold(
         sigma_well=sigma_well,
         cumulate=True,
     )
-    m_flat = solve_joint_spacetime_cvxpy(
-        dataset,
-        x_twd97=meta["x_twd97"],
-        y_twd97=meta["y_twd97"],
-    )
+    
+    # ── Solve using configured solver ─────────────────────────────────────
+    solver_choice = inversion_kwargs.get("solver", "cvxpy").lower()
+    
+    if solver_choice == "cvxpy":
+        from src.solvers_temporal import solve_joint_spacetime_cvxpy
+        m_flat = solve_joint_spacetime_cvxpy(
+            dataset,
+            x_twd97=meta["x_twd97"],
+            y_twd97=meta["y_twd97"],
+        )
+    elif solver_choice == "joint":
+        from src.solvers_temporal import solve_joint_spacetime
+        m_flat = solve_joint_spacetime(dataset)
+    else:
+        # Fallback/independent
+        from src.solvers_temporal import solve_independent_epochs
+        m_flat = solve_independent_epochs(dataset)
+
     depth_weights = compute_depth_weights(
         m_flat,
         dataset.d_insar,
