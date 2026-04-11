@@ -72,6 +72,118 @@ def parse_dataset_config(config_path: Optional[Union[Path, str]]) -> Dict[str, A
 
     return kwargs
 
+
+def get_max_available_month(data_dir: Union[Path, str], csv_dir_name: str = "CSV_files",
+                             csv_name_pattern: str = "{name}_insar_mlcw.csv",
+                             month_col_prefix: str = "Month_") -> int:
+    """
+    Auto-detect the maximum available month index in the input CSV data.
+
+    Reads the first station CSV from data_dir/csv_dir_name/ and determines
+    the highest Month_N column, returning its 0-based index.
+
+    Parameters
+    ----------
+    data_dir : Path or str
+        Root data directory
+    csv_dir_name : str
+        Name of subdirectory containing station CSVs
+    csv_name_pattern : str
+        Pattern to find first station CSV file, e.g. "{name}_insar_mlcw.csv"
+    month_col_prefix : str
+        Prefix for month columns, e.g. "Month_"
+
+    Returns
+    -------
+    int
+        0-based index of maximum month available (e.g., 83 for Month_084)
+    """
+    data_dir = Path(data_dir)
+    csv_dir = data_dir / csv_dir_name
+
+    if not csv_dir.exists():
+        raise FileNotFoundError(f"CSV directory not found: {csv_dir}")
+
+    # Find first CSV file
+    csv_files = list(csv_dir.glob("*_insar_mlcw.csv"))
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV files found in {csv_dir}")
+
+    sample_csv = csv_files[0]
+    sample_df = pd.read_csv(sample_csv)
+
+    # Extract all Month_N columns
+    month_cols = sorted([str(c) for c in sample_df.columns if str(c).startswith(month_col_prefix)])
+
+    if not month_cols:
+        raise ValueError(f"No {month_col_prefix} columns found in {sample_csv}")
+
+    # Return 0-based index (e.g., Month_084 → index 83)
+    return len(month_cols) - 1
+
+
+def parse_inversion_config(config_path: Optional[Union[Path, str]]) -> Dict[str, Any]:
+    """Extract and cast [Inversion] parameters from pipeline_config.ini."""
+    if not config_path: return {}
+    p = Path(config_path)
+    if not p.exists(): return {}
+
+    cfg = configparser.ConfigParser()
+    cfg.read(p, encoding="utf-8")
+    if not cfg.has_section("Inversion"): return {}
+
+    kwargs = {}
+    inv = dict(cfg.items("Inversion"))
+    
+    if "solver" in inv:
+        kwargs["solver"] = inv["solver"].strip().lower()
+    if "sigma_insar" in inv:
+        kwargs["sigma_insar"] = float(inv["sigma_insar"])
+    if "sigma_well" in inv:
+        kwargs["sigma_well"] = float(inv["sigma_well"])
+    if "month_start" in inv:
+        kwargs["month_start"] = int(inv["month_start"])
+    if "month_end" in inv and inv["month_end"].strip():
+        kwargs["month_end"] = int(inv["month_end"])
+
+    return kwargs
+
+
+def parse_spatial_config(config_path: Optional[Union[Path, str]]) -> Dict[str, Any]:
+    """Extract [SpatialInterpolation] method from pipeline_config.ini."""
+    if not config_path: return {"method": "gp"}
+    p = Path(config_path)
+    if not p.exists(): return {"method": "gp"}
+
+    cfg = configparser.ConfigParser()
+    cfg.read(p, encoding="utf-8")
+    
+    method = "gp"
+    if cfg.has_section("SpatialInterpolation"):
+        method = cfg.get("SpatialInterpolation", "method", fallback="gp").lower()
+    
+    return {"method": method}
+
+
+def parse_kriging_config(config_path: Optional[Union[Path, str]]) -> Dict[str, Any]:
+    """Extract [Kriging] parameters from pipeline_config.ini."""
+    if not config_path: return {}
+    p = Path(config_path)
+    if not p.exists(): return {}
+
+    cfg = configparser.ConfigParser()
+    cfg.read(p, encoding="utf-8")
+    if not cfg.has_section("Kriging"): return {}
+
+    ds = dict(cfg.items("Kriging"))
+    kwargs = {}
+    if "n_trials" in ds: kwargs["n_trials"] = int(ds["n_trials"])
+    if "n_splits" in ds: kwargs["n_splits"] = int(ds["n_splits"])
+    if "max_anisotropy" in ds: kwargs["max_anisotropy"] = float(ds["max_anisotropy"])
+    if "verbose" in ds: kwargs["verbose"] = ds["verbose"].lower() == "true"
+    
+    return kwargs
+
 # ---------------------------------------------------------------------------
 # Low-level helpers
 # ---------------------------------------------------------------------------
@@ -243,6 +355,7 @@ def build_real_dataset(
     x_dim: str = "X",
     y_dim: str = "Y",
     nc_depth_dim: str = "Depth",
+    **kwargs: Any,
 ) -> Tuple[SyntheticDataset, SystemConfig, Dict[str, Any]]:
     """
     Load real CRFP monitoring data into a SyntheticDataset for inversion.
