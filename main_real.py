@@ -171,24 +171,30 @@ def main() -> None:
         print(f"  {rank}. {meta['station_names'][idx]:20s}  {cumulative_per_station[idx]:.1f} mm")
 
     # ── Depth-weighting profiles (Stage-2 output) ─────────────────────────
-    # cumulative[s, l] = total compaction (mm) summed over all epochs
-    cumulative = m_est.sum(axis=0)                           # (n_stations, n_layers)
+    if cumulate:
+        # m_est is cumulative, so the total compaction is the last epoch
+        cumulative = m_est[-1, :, :]                         # (n_stations, n_layers)
+        insar_cumulative = dataset.d_insar.reshape(n_epochs, n_stations)[-1, :]  # (n_stations,)
+    else:
+        # m_est is incremental, sum over all epochs
+        cumulative = m_est.sum(axis=0)                       # (n_stations, n_layers)
+        insar_cumulative = dataset.d_insar.reshape(n_epochs, n_stations).sum(axis=0)
 
-    # InSAR cumulative surface displacement per station (sum over all 83 epochs).
-    # This is the physically correct denominator: weights will sum to ≤ 1.0.
-    insar_cumulative = dataset.d_insar.reshape(n_epochs, n_stations).sum(axis=0)  # (n_stations,)
     insar_cumulative_safe = np.where(insar_cumulative > 0, insar_cumulative, 1.0)
 
     # Coverage fraction: fraction of total InSAR signal explained by 0–300 m MLCW.
-    # Residual (1 - coverage) originates below 300 m and cannot be recovered.
-    # Note: Can be > 1.0 if MLCW-derived m_est values exceed InSAR due to measurement
-    # noise or well calibration biases. Values < 1.0 indicate deep compaction contribution.
     insar_coverage = cumulative.sum(axis=1) / insar_cumulative_safe  # (n_stations,)
 
     # Depth weights: each layer's fraction of TOTAL InSAR surface displacement.
-    # depth_weights[s, l] = how much of the total InSAR signal at station s is
-    # attributed to layer l (within 0–300 m). Sum = insar_coverage[s].
     depth_weights = cumulative / insar_cumulative_safe[:, np.newaxis]  # (n_stations, n_layers)
+    
+    # Enforce strict upper bound on depth weights (sum <= 0.99)
+    total_weights = depth_weights.sum(axis=1, keepdims=True)
+    scale_factors = np.where(total_weights > 0.99, 0.99 / np.maximum(total_weights, 1e-9), 1.0)
+    depth_weights = depth_weights * scale_factors
+    
+    # Recompute insar_coverage after clipping
+    insar_coverage = depth_weights.sum(axis=1)
 
     valid_depths_m = meta["valid_depths_m"]
     mean_weights = depth_weights.mean(axis=0)                # average across stations
@@ -197,9 +203,31 @@ def main() -> None:
     for i in top3_idx:
         print(f"  {valid_depths_m[i]:>5} m : {mean_weights[i] * 100:.1f}% of total InSAR surface")
 
-    mean_coverage = insar_coverage.mean()
-    print(f"\nMean 0–300 m coverage fraction across stations: {mean_coverage * 100:.1f}%")
-    print(f"  (Residual {(1 - mean_coverage) * 100:.1f}% of surface signal originates below 300 m)")
+    # Filter statistics for valid stations (InSAR > 10mm, MLCW > 5mm)
+    valid_stats_mask = (insar_cumulative > 10.0) & (cumulative.sum(axis=1) > 5.0)
+    
+    if np.any(valid_stats_mask):
+        valid_coverage = insar_coverage[valid_stats_mask]
+        mean_coverage = valid_coverage.mean()
+        med_coverage = np.median(valid_coverage)
+        p25 = np.percentile(valid_coverage, 25)
+        p75 = np.percentile(valid_coverage, 75)
+        min_coverage = np.min(valid_coverage)
+        max_coverage = np.max(valid_coverage)
+        n_valid = np.sum(valid_stats_mask)
+        print(f"\n0–300 m coverage fraction summary (across {n_valid} valid stations):")
+    else:
+        mean_coverage, med_coverage, p25, p75 = 0.0, 0.0, 0.0, 0.0
+        min_coverage, max_coverage = 0.0, 0.0
+        print("\n0–300 m coverage fraction summary (NO VALID STATIONS):")
+
+    print(f"  Mean   : {mean_coverage * 100:.1f}%")
+    print(f"  Median : {med_coverage * 100:.1f}%")
+    print(f"  25%    : {p25 * 100:.1f}%")
+    print(f"  75%    : {p75 * 100:.1f}%")
+    print(f"  Min    : {min_coverage * 100:.1f}%")
+    print(f"  Max    : {max_coverage * 100:.1f}%")
+    print(f"  (Mean residual {(1 - mean_coverage) * 100:.1f}% of surface signal originates below 300 m)")
 
     # ── Save results ──────────────────────────────────────────────────────
     out_path = args.output_dir / "real_m_est.npz"
