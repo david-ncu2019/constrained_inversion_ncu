@@ -9,8 +9,12 @@ from typing import Optional, Tuple, Any, List, Dict
 import numpy as np
 import pandas as pd
 from scipy.optimize import differential_evolution, minimize_scalar
-from sklearn.base import BaseEstimator, RegressorMixin, clone
+from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.model_selection import KFold, cross_val_score
+import optuna
+import matplotlib.pyplot as plt
+import os
 
 
 class RotatedGPR(BaseEstimator, RegressorMixin):
@@ -275,3 +279,200 @@ def validate_anisotropy_assumptions(X: np.ndarray, y: np.ndarray, n_directions: 
         "variance_ratio": float(var_ratio),
         "is_anisotropic": var_ratio > 1.5
     }
+
+
+# --- Custom Variogram Models for PyKrige ---
+
+def stable_variogram_model(params, dists):
+    """
+    Stable variogram model: psill * (1 - exp(-(h/r)^alpha)) + nugget
+    params: [psill, range, nugget, alpha]
+    """
+    psill, r, nugget, alpha = params
+    return psill * (1.0 - np.exp(-(dists / r) ** alpha)) + nugget
+
+
+def circular_variogram_model(params, dists):
+    """
+    Circular variogram model.
+    params: [psill, range, nugget]
+    """
+    psill, r, nugget = params
+    
+    # Handle dists > r
+    mask = dists <= r
+    val = np.full_like(dists, psill + nugget)
+    
+    h_r = dists[mask] / r
+    term = (2.0 / np.pi) * (np.arccos(h_r) - h_r * np.sqrt(1.0 - h_r**2))
+    val[mask] = psill * (1.0 - term) + nugget
+    return val
+
+
+def rational_quadratic_variogram_model(params, dists):
+    """
+    Rational Quadratic variogram model: psill * (1 - (1 + h^2 / (2*alpha*r^2))^-alpha) + nugget
+    params: [psill, range, nugget, alpha]
+    """
+    psill, r, nugget, alpha = params
+    return psill * (1.0 - (1.0 + dists**2 / (2.0 * alpha * r**2)) ** (-alpha)) + nugget
+
+
+class AnisotropicKriging(BaseEstimator, RegressorMixin):
+    """
+    Ordinary Kriging with Optuna-based anisotropic parameter optimization.
+    Supports all native PyKrige models plus custom Stable, Circular, and Rational Quadratic models.
+    """
+    
+    NATIVE_MODELS = ['linear', 'power', 'gaussian', 'spherical', 'exponential', 'hole-effect']
+    CUSTOM_MODELS = {
+        'stable': stable_variogram_model,
+        'circular': circular_variogram_model,
+        'rational-quadratic': rational_quadratic_variogram_model
+    }
+
+    def __init__(
+        self,
+        n_trials: int = 50,
+        n_splits: int = 5,
+        verbose: bool = False,
+        random_state: Optional[int] = None,
+        max_anisotropy: float = 3.0
+    ):
+        self.n_trials = n_trials
+        self.n_splits = n_splits
+        self.verbose = verbose
+        self.random_state = random_state
+        self.max_anisotropy = max_anisotropy
+        
+        # Fitted attributes
+        self.model_ = None
+        self.best_params_ = None
+        self.best_model_name_ = None
+        self.study_ = None
+
+    def _get_ok_instance(self, X, y, params, model_name):
+        from pykrige.ok import OrdinaryKriging
+        
+        # Extract common params
+        psill = params['psill']
+        v_range = params['range']
+        nugget = params['nugget']
+        angle = params['angle']
+        scaling = params['scaling']
+        
+        kwargs = {
+            'variogram_model': model_name if model_name in self.NATIVE_MODELS else 'custom',
+            'anisotropy_angle': angle,
+            'anisotropy_scaling': scaling,
+            'verbose': False,
+            'enable_plotting': False
+        }
+        
+        if model_name in self.NATIVE_MODELS:
+            kwargs['variogram_parameters'] = [psill, v_range, nugget]
+        else:
+            kwargs['variogram_function'] = self.CUSTOM_MODELS[model_name]
+            v_params = [psill, v_range, nugget]
+            if model_name in ['stable', 'rational-quadratic']:
+                v_params.append(params['alpha'])
+            kwargs['variogram_parameters'] = v_params
+            
+        return OrdinaryKriging(X[:, 0], X[:, 1], y, **kwargs)
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> 'AnisotropicKriging':
+        """Optimize Kriging parameters using Optuna and fit the final model."""
+        import logging
+        if not self.verbose:
+            optuna.logging.set_verbosity(optuna.logging.WARNING)
+        
+        X = np.asarray(X)
+        y = np.asarray(y)
+        
+        def objective(trial):
+            model_name = trial.suggest_categorical('model', self.NATIVE_MODELS + list(self.CUSTOM_MODELS.keys()))
+            
+            # Basic params
+            psill = trial.suggest_float('psill', np.var(y)*0.1, np.var(y)*2.0)
+            v_range = trial.suggest_float('range', np.max(np.std(X, axis=0))*0.1, np.max(np.std(X, axis=0))*5.0)
+            nugget = trial.suggest_float('nugget', 0, np.var(y)*0.5)
+            angle = trial.suggest_float('angle', 0, 180)
+            scaling = trial.suggest_float('scaling', 1.0, self.max_anisotropy)
+            
+            params = {
+                'psill': psill, 'range': v_range, 'nugget': nugget,
+                'angle': angle, 'scaling': scaling
+            }
+            
+            if model_name in ['stable', 'rational-quadratic']:
+                params['alpha'] = trial.suggest_float('alpha', 0.1, 2.0)
+            
+            kf = KFold(n_splits=self.n_splits, shuffle=True, random_state=self.random_state)
+            scores = []
+            
+            for train_idx, val_idx in kf.split(X):
+                try:
+                    ok = self._get_ok_instance(X[train_idx], y[train_idx], params, model_name)
+                    # OrdinaryKriging doesn't have a standard .predict, we use .execute
+                    # but for cross-validation we just need an estimate at val points
+                    y_pred, _ = ok.execute('points', X[val_idx, 0], X[val_idx, 1])
+                    mse = np.mean((y[val_idx] - y_pred)**2)
+                    scores.append(mse)
+                except Exception:
+                    return float('inf')
+            
+            return np.mean(scores) if scores else float('inf')
+
+        self.study_ = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(seed=self.random_state))
+        self.study_.optimize(objective, n_trials=self.n_trials)
+        
+        self.best_params_ = self.study_.best_params
+        self.best_model_name_ = self.best_params_.pop('model')
+        
+        # Fit final model
+        self.model_ = self._get_ok_instance(X, y, self.best_params_, self.best_model_name_)
+        
+        return self
+
+    def predict(self, X: np.ndarray, return_std: bool = False):
+        """Predict using the optimized Kriging model."""
+        X = np.asarray(X)
+        y_pred, y_var = self.model_.execute('points', X[:, 0], X[:, 1])
+        if return_std:
+            return y_pred, np.sqrt(np.abs(y_var))
+        return y_pred
+
+    def save_diagnostics(self, output_path: str, layer_idx: int):
+        """Save variogram plot and parameters."""
+        os.makedirs(output_path, exist_ok=True)
+
+        # Plot variogram
+        plt.figure(figsize=(8, 5))
+        # Suppress on-screen display (display_variogram_model() causes blocking windows).
+        # Variogram PNG is saved via savefig() below regardless.
+        # self.model_.display_variogram_model()
+        plt.title(f"Layer {layer_idx} Variogram - Model: {self.best_model_name_}")
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_path, f"layer_{layer_idx}_variogram.png"))
+        plt.close()
+        
+        # Parameters
+        with open(os.path.join(output_path, f"layer_{layer_idx}_params.txt"), 'w') as f:
+            f.write(f"Best Model: {self.best_model_name_}\n")
+            for k, v in self.best_params_.items():
+                f.write(f"{k}: {v}\n")
+
+    def get_kernel_params(self) -> Dict[str, Any]:
+        """Adhere to a similar structure as RotatedGPR for reporting."""
+        params = {
+            "model_type": "Kriging",
+            "best_model": self.best_model_name_,
+            "rotation_angle_deg": float(self.best_params_.get('angle', 0)),
+            "anisotropy_ratio": float(self.best_params_.get('scaling', 1.0)),
+            "psill": float(self.best_params_.get('psill', 0)),
+            "range": float(self.best_params_.get('range', 0)),
+            "nugget": float(self.best_params_.get('nugget', 0)),
+        }
+        if 'alpha' in self.best_params_:
+            params['alpha'] = float(self.best_params_['alpha'])
+        return params
