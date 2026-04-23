@@ -9,12 +9,14 @@ from typing import Optional, Tuple, Any, List, Dict
 import numpy as np
 import pandas as pd
 from scipy.optimize import differential_evolution, minimize_scalar
-from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.model_selection import KFold, cross_val_score
+from sklearn.cluster import KMeans
 import optuna
 import matplotlib.pyplot as plt
 import os
+import warnings
 
 
 class RotatedGPR(BaseEstimator, RegressorMixin):
@@ -95,116 +97,122 @@ class RotatedGPR(BaseEstimator, RegressorMixin):
         ])
         return X @ rotation_matrix
 
-    def _constrained_optimizer(self, obj_func, initial_theta, bounds):
-        """Custom optimizer wrapper that enforces anisotropy ratio constraints using SLSQP."""
-        from scipy.optimize import minimize
-        
-        # Find indices of length_scale parameters
-        ls_indices = None
-        idx = 0
-        for hyper in self.kernel.hyperparameters:
-            if 'length_scale' in hyper.name:
-                if hyper.n_elements == 2:
-                    ls_indices = [idx, idx + 1]
-                    break
-            idx += hyper.n_elements
-        
-        # Fallback
-        if ls_indices is None:
-            ls_indices = [1, 2]
-        
-        # Define constraint: |log(L1) - log(L2)| <= log(max_ratio)
-        log_ratio_limit = np.log(self.max_anisotropy)
-        
-        def ratio_constraint(theta):
-            return log_ratio_limit - np.abs(theta[ls_indices[0]] - theta[ls_indices[1]])
-        
-        constraint = {'type': 'ineq', 'fun': ratio_constraint}
-        
-        result = minimize(
-            obj_func,
-            initial_theta,
-            method='SLSQP',
-            jac=True,
-            bounds=bounds,
-            constraints=[constraint],
-            options={'ftol': 1e-9, 'maxiter': 100}
-        )
-        
-        return result.x, result.fun
-
-    def _angle_objective(self, angle: float) -> float:
-        """Negative log marginal likelihood for a given rotation angle."""
+    def _eval_lml(self, angle, theta, alpha):
+        """Evaluate negative log-marginal-likelihood for a parameter vector."""
+        test_kernel = clone(self.kernel)
+        if len(test_kernel.bounds) != len(theta):
+            return float('inf')
+        test_kernel.theta = theta
         X_rot = self._rotate_coords(self.X_train_centered_, angle)
-        
-        optimizer_func = self._constrained_optimizer if self.max_anisotropy is not None else self.optimizer
-        
         gp = GaussianProcessRegressor(
-            kernel=clone(self.kernel),
-            alpha=self.alpha,
-            optimizer=optimizer_func,
-            n_restarts_optimizer=0,
-            normalize_y=True,
-            random_state=self.random_state
+            kernel=test_kernel, alpha=alpha,
+            optimizer=None, normalize_y=True,
         )
-        gp.fit(X_rot, self.y_train_)
-        
-        lml = gp.log_marginal_likelihood()
-        self.angle_search_history_.append((angle, -lml))
-        
-        return -lml
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                gp.fit(X_rot, self.y_train_)
+                return -gp.log_marginal_likelihood()
+        except Exception:
+            return float('inf')
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> 'RotatedGPR':
-        """Fit the rotated GPR model by optimizing the rotation angle and kernel hyperparameters."""
+        """Fit using joint Optuna + L-BFGS-B refinement over angle, kernel, and noise."""
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+
         self.X_train_ = np.asarray(X, dtype=np.float64)
         self.y_train_ = np.asarray(y, dtype=np.float64)
-        
+
         if self.X_train_.shape[1] != 2:
             raise ValueError(f"X must have exactly 2 columns, got {self.X_train_.shape[1]}")
-        
+
         if self.center_coords:
             self.X_train_centered_, self.X_center_ = self._center_coordinates(self.X_train_)
         else:
             self.X_train_centered_ = self.X_train_
             self.X_center_ = np.zeros(2)
-        
+
         self.angle_search_history_ = []
-        
-        if self.angle_search_method == "bounded":
-            result = minimize_scalar(
-                self._angle_objective,
-                bounds=self.angle_bounds,
-                method='bounded',
-                options={'xatol': self.angle_precision}
-            )
-            self.best_angle_deg_ = result.x
-        elif self.angle_search_method == "global":
-            result = differential_evolution(
-                lambda x: self._angle_objective(x[0]),
-                bounds=[self.angle_bounds],
-                seed=self.random_state,
-                atol=self.angle_precision,
-                tol=0.01
-            )
-            self.best_angle_deg_ = result.x[0]
-        else:
-            raise ValueError(f"Unknown angle_search_method: {self.angle_search_method}")
-        
-        # Fit final model
+
+        # Kernel parameter bounds (log-space)
+        k_bounds = self.kernel.bounds  # shape (n_params, 2)
+        n_kp = len(k_bounds)
+        max_ratio_log = np.log(self.max_anisotropy) if self.max_anisotropy and self.max_anisotropy > 1.0 else 0.0
+
+        # ---- Phase 1: Optuna global search --------------------------------
+        def objective(trial):
+            angle = trial.suggest_float('angle', self.angle_bounds[0], self.angle_bounds[1])
+            c_val = trial.suggest_float('theta_0', k_bounds[0][0], k_bounds[0][1])
+            l_maj = trial.suggest_float('l_maj', k_bounds[1][0], k_bounds[1][1])
+            ratio_log = trial.suggest_float('ratio_log', 0.0, max_ratio_log) if max_ratio_log > 0 else 0.0
+            log_alpha = trial.suggest_float('log_alpha', -14, 0)  # log10 scale
+
+            theta = np.array([c_val, l_maj, l_maj - ratio_log])
+            alpha = 10.0 ** log_alpha
+            nlml = self._eval_lml(angle, theta, alpha)
+            if np.isfinite(nlml):
+                self.angle_search_history_.append((angle, nlml))
+            return nlml
+
+        study = optuna.create_study(
+            direction='minimize',
+            sampler=optuna.samplers.TPESampler(seed=self.random_state),
+        )
+        study.optimize(objective, n_trials=200)
+        self.study_ = study
+
+        bp = study.best_params
+        best_angle = bp['angle']
+        best_c     = bp['theta_0']
+        best_lmaj  = bp['l_maj']
+        best_ratio = bp.get('ratio_log', 0.0)
+        best_la    = bp['log_alpha']
+
+        # ---- Phase 2: L-BFGS-B local refinement ---------------------------
+        from scipy.optimize import minimize as sp_minimize
+
+        def _pack(angle, c, lmaj, ratio, la):
+            return np.array([angle, c, lmaj, ratio, la])
+
+        def _obj_vec(vec):
+            a, c, lm, r, la = vec
+            theta = np.array([c, lm, lm - r])
+            return self._eval_lml(a, theta, 10.0 ** la)
+
+        x0 = _pack(best_angle, best_c, best_lmaj, best_ratio, best_la)
+        bounds_refine = [
+            self.angle_bounds,
+            (k_bounds[0][0], k_bounds[0][1]),
+            (k_bounds[1][0], k_bounds[1][1]),
+            (0.0, max_ratio_log if max_ratio_log > 0 else 0.01),
+            (-14, 0),
+        ]
+        try:
+            res = sp_minimize(_obj_vec, x0, method='L-BFGS-B',
+                              bounds=bounds_refine,
+                              options={'ftol': 1e-12, 'maxiter': 200})
+            if res.fun < study.best_value:
+                best_angle, best_c, best_lmaj, best_ratio, best_la = res.x
+        except Exception:
+            pass  # keep Optuna result
+
+        # ---- Store best params --------------------------------------------
+        self.best_angle_deg_ = float(best_angle)
+        self.best_alpha_     = float(10.0 ** best_la)
+
+        best_theta = np.array([best_c, best_lmaj, best_lmaj - best_ratio])
+        best_kernel = clone(self.kernel)
+        best_kernel.theta = best_theta
+
         X_final = self._rotate_coords(self.X_train_centered_, self.best_angle_deg_)
-        optimizer_func = self._constrained_optimizer if self.max_anisotropy is not None else self.optimizer
-        
         self.gp_model_ = GaussianProcessRegressor(
-            kernel=clone(self.kernel),
-            alpha=self.alpha,
-            optimizer=optimizer_func,
-            n_restarts_optimizer=self.n_restarts_optimizer,
-            normalize_y=True,
-            random_state=self.random_state
+            kernel=best_kernel, alpha=self.best_alpha_,
+            optimizer=None, normalize_y=True,
+            random_state=self.random_state,
         )
         self.gp_model_.fit(X_final, self.y_train_)
         self.log_marginal_likelihood_ = self.gp_model_.log_marginal_likelihood()
-        
+
         return self
 
     def predict(self, X: np.ndarray, return_std: bool = False, return_cov: bool = False):
@@ -224,7 +232,7 @@ class RotatedGPR(BaseEstimator, RegressorMixin):
         
         constant = 1.0
         length_scale = [1.0, 1.0]
-        noise = 0.0
+        noise = getattr(self, 'best_alpha_', self.alpha)
         
         for key, val in kernel_params.items():
             if "constant_value" in key and "bounds" not in key:
@@ -382,21 +390,31 @@ class AnisotropicKriging(BaseEstimator, RegressorMixin):
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> 'AnisotropicKriging':
         """Optimize Kriging parameters using Optuna and fit the final model."""
-        import logging
         if not self.verbose:
             optuna.logging.set_verbosity(optuna.logging.WARNING)
         
         X = np.asarray(X)
         y = np.asarray(y)
         
+        # Pre-compute spatial fold assignments (expensive KMeans done once)
+        clusters = KMeans(
+            n_clusters=self.n_splits, random_state=self.random_state, n_init=10
+        ).fit_predict(X)
+        
+        # Tighter bounds derived from data
+        data_var   = float(np.var(y))
+        max_dist   = float(np.sqrt((X[:, 0].max() - X[:, 0].min())**2 +
+                                   (X[:, 1].max() - X[:, 1].min())**2))
+        
         def objective(trial):
-            model_name = trial.suggest_categorical('model', self.NATIVE_MODELS + list(self.CUSTOM_MODELS.keys()))
+            model_name = trial.suggest_categorical(
+                'model', self.NATIVE_MODELS + list(self.CUSTOM_MODELS.keys())
+            )
             
-            # Basic params
-            psill = trial.suggest_float('psill', np.var(y)*0.1, np.var(y)*2.0)
-            v_range = trial.suggest_float('range', np.max(np.std(X, axis=0))*0.1, np.max(np.std(X, axis=0))*5.0)
-            nugget = trial.suggest_float('nugget', 0, np.var(y)*0.5)
-            angle = trial.suggest_float('angle', 0, 180)
+            psill   = trial.suggest_float('psill',   data_var * 0.05, data_var * 3.0)
+            v_range = trial.suggest_float('range',   max_dist * 0.02, max_dist * 1.5)
+            nugget  = trial.suggest_float('nugget',  0.0, data_var * 0.8)
+            angle   = trial.suggest_float('angle',   0.0, 180.0)
             scaling = trial.suggest_float('scaling', 1.0, self.max_anisotropy)
             
             params = {
@@ -407,16 +425,20 @@ class AnisotropicKriging(BaseEstimator, RegressorMixin):
             if model_name in ['stable', 'rational-quadratic']:
                 params['alpha'] = trial.suggest_float('alpha', 0.1, 2.0)
             
-            kf = KFold(n_splits=self.n_splits, shuffle=True, random_state=self.random_state)
             scores = []
-            
-            for train_idx, val_idx in kf.split(X):
+            for fold in range(self.n_splits):
+                train_idx = np.where(clusters != fold)[0]
+                val_idx   = np.where(clusters == fold)[0]
+                
+                if len(train_idx) < 5 or len(val_idx) < 1:
+                    continue
+                
                 try:
-                    ok = self._get_ok_instance(X[train_idx], y[train_idx], params, model_name)
-                    # OrdinaryKriging doesn't have a standard .predict, we use .execute
-                    # but for cross-validation we just need an estimate at val points
+                    ok = self._get_ok_instance(
+                        X[train_idx], y[train_idx], params, model_name
+                    )
                     y_pred, _ = ok.execute('points', X[val_idx, 0], X[val_idx, 1])
-                    mse = np.mean((y[val_idx] - y_pred)**2)
+                    mse = float(np.mean((y[val_idx] - y_pred) ** 2))
                     scores.append(mse)
                 except Exception:
                     return float('inf')
@@ -448,10 +470,26 @@ class AnisotropicKriging(BaseEstimator, RegressorMixin):
 
         # Plot variogram
         plt.figure(figsize=(8, 5))
-        # Suppress on-screen display (display_variogram_model() causes blocking windows).
-        # Variogram PNG is saved via savefig() below regardless.
-        # self.model_.display_variogram_model()
+        
+        try:
+            # Manually extract and plot to avoid blocking windows from PyKrige
+            lags = self.model_.lags
+            semiv = self.model_.semivariance
+            plt.plot(lags, semiv, 'ro', label='Empirical Semivariogram')
+            
+            if callable(self.model_.variogram_function):
+                x = np.linspace(0, np.max(lags), 100)
+                y = self.model_.variogram_function(self.model_.variogram_model_parameters, x)
+                plt.plot(x, y, 'b-', label=f'{self.best_model_name_} Model')
+        except AttributeError:
+            # Fallback if internal names change
+            pass
+
         plt.title(f"Layer {layer_idx} Variogram - Model: {self.best_model_name_}")
+        plt.xlabel('Distance')
+        plt.ylabel('Semivariance')
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.6)
         plt.tight_layout()
         plt.savefig(os.path.join(output_path, f"layer_{layer_idx}_variogram.png"))
         plt.close()

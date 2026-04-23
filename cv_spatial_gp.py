@@ -45,10 +45,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from typing import Optional, List, Dict, Any, Tuple
 
 from src.config import SyntheticDataset, SystemConfig
-from src.loader import build_real_dataset, parse_dataset_config
+from src.loader import build_real_dataset, parse_dataset_config, parse_inversion_config
 from src.solvers_temporal import solve_joint_spacetime_cvxpy
 
 
@@ -197,11 +198,13 @@ def run_loso_fold(
     full_meta: Dict[str, Any],
     full_depth_weights: np.ndarray,
     exclude_idx: int,
+    config_path: Optional[str] = None,
     n_gp_restarts: int = 10,
     interp_mode: str = "gp",
     max_anisotropy: Optional[float] = None,
     k_trials: int = 50,
     k_splits: int = 5,
+    show_progress: bool = True,
 ) -> Dict[str, Any]:
     """
     Run one LOSO fold for station ``exclude_idx``.
@@ -280,6 +283,7 @@ def run_loso_fold(
         max_anisotropy=max_anisotropy,
         k_trials=k_trials,
         k_splits=k_splits,
+        show_progress=show_progress,
     )
     # mean_pred_2d: (n_layers, 1); flatten to (n_layers,)
     mean_pred = mean_pred_2d[:, 0]
@@ -437,28 +441,24 @@ def main() -> None:
             "Run main_real.py first with the same data_dir."
         )
 
-    # ── Run LOSO folds ────────────────────────────────────────────────────
-    all_folds = []
-    print(f"\nRunning {n_stations} LOSO folds ...")
+    # ── Run LOSO folds (parallel) ─────────────────────────────────────────
+    print(f"\nRunning {n_stations} LOSO folds (parallel, n_jobs=4) ...")
     t_total = time.perf_counter()
 
-    for i in range(n_stations):
-        name = station_names[i]
-        print(f"  Fold {i+1:2d}/{n_stations}: excluding {name} ... ", end="", flush=True)
-        t0 = time.perf_counter()
-        fold_result = run_loso_fold(
+    all_folds = Parallel(n_jobs=4, backend="loky", verbose=10)(
+        delayed(run_loso_fold)(
             full_dataset, full_config, full_meta,
             full_depth_weights, i,
+            config_path=args.config,
             n_gp_restarts=args.n_restarts,
             interp_mode=args.interp_mode,
             max_anisotropy=args.max_anisotropy,
             k_trials=args.k_trials,
-            k_splits=args.k_splits
+            k_splits=args.k_splits,
+            show_progress=False,
         )
-        elapsed = time.perf_counter() - t0
-        total_col_rmse = float(np.abs(fold_result["error"].sum()))
-        print(f"done ({elapsed:.0f}s)  total-col error = {total_col_rmse:.4f}")
-        all_folds.append(fold_result)
+        for i in range(n_stations)
+    )
 
     total_elapsed = time.perf_counter() - t_total
     print(f"\nAll folds completed in {total_elapsed:.0f}s")

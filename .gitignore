@@ -210,3 +210,11 @@ __marimo__/
 # my_input_data/
 # output/
 
+
+my_input_data/
+my_input_data_synthetic/
+output/
+legacy/
+scratch/
+pipeline_run.log
+

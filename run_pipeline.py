@@ -201,10 +201,12 @@ def run_stage(
 
     elapsed = time.perf_counter() - t0
 
-    # Echo last 20 lines to console
+    # Echo last 20 lines to console (encode to ASCII, replacing non-ASCII chars,
+    # to avoid UnicodeEncodeError on Windows CP1252 console streams)
     lines = (result.stdout or "").splitlines()
     for line in lines[-20:]:
-        logger.info(f"       {line}")
+        safe_line = line.encode("ascii", errors="replace").decode("ascii")
+        logger.info(f"       {safe_line}")
 
     if result.returncode != 0:
         logger.error(f"[FAIL] {name} exited with code {result.returncode}")
@@ -567,11 +569,17 @@ def main() -> None:
     fixed_lam_str   = cfg.get("Tuning", "fixed_lam",   fallback="").strip()
     fixed_lam_t_str = cfg.get("Tuning", "fixed_lam_t", fallback="").strip()
 
+    # Check for pre-set lam / lam_t in [Inversion] section (takes priority over [Tuning])
+    preset_lam   = cfg.get("Inversion", "lam",   fallback="").strip()
+    preset_lam_t = cfg.get("Inversion", "lam_t", fallback="").strip()
+    use_preset_inversion = bool(preset_lam and preset_lam_t)
+
     # Determine if tuning should be skipped because fixed values are provided
     use_fixed = bool(fixed_lam_str and fixed_lam_t_str)
-    if args.skip_tuning and not use_fixed:
+    if args.skip_tuning and not use_fixed and not use_preset_inversion:
         logger.error(
-            "--skip-tuning requires [Tuning] fixed_lam and fixed_lam_t to be set in the config."
+            "--skip-tuning requires [Tuning] fixed_lam and fixed_lam_t "
+            "(or [Inversion] lam and lam_t) to be set in the config."
         )
         sys.exit(1)
 
@@ -588,7 +596,14 @@ def main() -> None:
     # ════════════════════════════════════════════════════════════════════════
     # Stage 1: Hyperparameter Tuning
     # ════════════════════════════════════════════════════════════════════════
-    if use_fixed or args.skip_tuning:
+    if use_preset_inversion:
+        best_lam   = float(preset_lam)
+        best_lam_t = float(preset_lam_t)
+        logger.info(
+            f"[INFO] Pre-set lam={best_lam}, lam_t={best_lam_t} from config — "
+            f"skipping Stage 1 (Optuna)."
+        )
+    elif use_fixed or args.skip_tuning:
         best_lam   = float(fixed_lam_str)
         best_lam_t = float(fixed_lam_t_str)
         logger.info(
@@ -601,6 +616,7 @@ def main() -> None:
             tuning_script = "tune_hyperparams_optuna.py"
             tuning_skip_cond = paths["tuning_dir"] / "best_params_optuna.txt"
             n_trials = cfg.getint("Tuning", "n_trials", fallback=30)
+            prev_best_params_str = cfg.get("Tuning", "prev_best_params", fallback="")
             cmd_tuning = [
                 python, tuning_script,
                 "--config",          str(args.config),
@@ -610,6 +626,12 @@ def main() -> None:
                 "--sigma-well",      str(sigma_well),
                 "--n-trials",        str(n_trials),
             ]
+            if prev_best_params_str:
+                prev_best_path = Path(prev_best_params_str)
+                if prev_best_path.exists():
+                    cmd_tuning.extend(["--prev-best", str(prev_best_path)])
+                else:
+                    logger.warning(f"[WARN] prev_best_params file not found: {prev_best_path}")
         else:
             tuning_script = "tune_hyperparams.py"
             tuning_skip_cond = paths["tuning_csv"]

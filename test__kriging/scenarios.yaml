@@ -1,0 +1,195 @@
+# ============================================================
+# Interpolation Engine Benchmark Scenarios
+# ============================================================
+# Each scenario defines a synthetic Gaussian random field.
+# Angle convention: CCW from +X axis (mathematical / PyKrige).
+#
+# Fields:
+#   angle        – rotation angle (degrees, CCW from +X)
+#   range_major  – correlation range along the major axis (m)
+#   range_minor  – correlation range along the minor axis (m)
+#   psill        – partial sill (structural variance)
+#   nugget       – nugget (measurement noise variance)
+#   sample_frac  – fraction of grid cells used as sample points
+#   seed         – random seed for reproducibility
+# ============================================================
+
+# --- Grid definition (shared by all scenarios) ---------------
+grid:
+  nx: 100
+  ny: 100
+  xsiz: 10.0    # cell size in x (m)
+  ysiz: 10.0    # cell size in y (m)
+  xmn:   5.0    # x origin
+  ymn:   5.0    # y origin
+
+# --- Engine caps (max training points per engine) ------------
+engine_caps:
+  gpr:    1500   # GPR is O(n^3)
+  kriging: 2000  # Kriging CV also expensive
+
+# --- 20% sampling scenarios (already completed) --------------
+S1_HighAniso_45deg:
+  angle:       45.0
+  range_major: 400.0
+  range_minor:  50.0
+  psill:         1.0
+  nugget:        0.05
+  sample_frac:   0.20
+  seed:          42
+
+S2_ModAniso_120deg:
+  angle:       120.0
+  range_major: 200.0
+  range_minor:  60.0
+  psill:         0.5
+  nugget:        0.3
+  sample_frac:   0.20
+  seed:          42
+
+S3_Isotropic:
+  angle:         0.0
+  range_major: 200.0
+  range_minor: 200.0
+  psill:         0.9
+  nugget:        0.1
+  sample_frac:   0.20
+  seed:          42
+
+S4_HighNugget_90deg:
+  angle:        90.0
+  range_major: 300.0
+  range_minor: 100.0
+  psill:         0.4
+  nugget:        0.6
+  sample_frac:   0.20
+  seed:          42
+
+S5_LongRange_0deg:
+  angle:         0.0
+  range_major: 600.0
+  range_minor:  80.0
+  psill:         1.2
+  nugget:        0.02
+  sample_frac:   0.20
+  seed:          42
+
+S6_ShortRange_160deg:
+  angle:       160.0
+  range_major: 120.0
+  range_minor:  40.0
+  psill:         0.8
+  nugget:        0.15
+  sample_frac:   0.20
+  seed:          42
+
+# --- 1% sampling scenarios (sparse / realistic) -------------
+S7_HighAniso_45deg_1pct:
+  angle:       45.0
+  range_major: 400.0
+  range_minor:  50.0
+  psill:         1.0
+  nugget:        0.05
+  sample_frac:   0.01
+  seed:          42
+
+S8_ModAniso_120deg_1pct:
+  angle:       120.0
+  range_major: 200.0
+  range_minor:  60.0
+  psill:         0.5
+  nugget:        0.3
+  sample_frac:   0.01
+  seed:          42
+
+S9_Isotropic_1pct:
+  angle:         0.0
+  range_major: 200.0
+  range_minor: 200.0
+  psill:         0.9
+  nugget:        0.1
+  sample_frac:   0.01
+  seed:          42
+
+S10_HighNugget_90deg_1pct:
+  angle:        90.0
+  range_major: 300.0
+  range_minor: 100.0
+  psill:         0.4
+  nugget:        0.6
+  sample_frac:   0.01
+  seed:          42
+
+S11_LongRange_0deg_1pct:
+  angle:         0.0
+  range_major: 600.0
+  range_minor:  80.0
+  psill:         1.2
+  nugget:        0.02
+  sample_frac:   0.01
+  seed:          42
+
+S12_ShortRange_160deg_1pct:
+  angle:       160.0
+  range_major: 120.0
+  range_minor:  40.0
+  psill:         0.8
+  nugget:        0.15
+  sample_frac:   0.01
+  seed:          42
+
+
+# --- 1% sampling scenarios (sparse / realistic) -------------
+S7_HighAniso_45deg_1pct:
+  angle:       45.0
+  range_major: 400.0
+  range_minor:  50.0
+  psill:         1.0
+  nugget:        0.05
+  sample_frac:   0.01
+  seed:          42
+
+S8_ModAniso_120deg_1pct:
+  angle:       120.0
+  range_major: 200.0
+  range_minor:  60.0
+  psill:         0.5
+  nugget:        0.3
+  sample_frac:   0.01
+  seed:          42
+
+S9_Isotropic_1pct:
+  angle:         0.0
+  range_major: 200.0
+  range_minor: 200.0
+  psill:         0.9
+  nugget:        0.1
+  sample_frac:   0.01
+  seed:          42
+
+S10_HighNugget_90deg_1pct:
+  angle:        90.0
+  range_major: 300.0
+  range_minor: 100.0
+  psill:         0.4
+  nugget:        0.6
+  sample_frac:   0.01
+  seed:          42
+
+S11_LongRange_0deg_1pct:
+  angle:         0.0
+  range_major: 600.0
+  range_minor:  80.0
+  psill:         1.2
+  nugget:        0.02
+  sample_frac:   0.01
+  seed:          42
+
+S12_ShortRange_160deg_1pct:
+  angle:       160.0
+  range_major: 120.0
+  range_minor:  40.0
+  psill:         0.8
+  nugget:        0.15
+  sample_frac:   0.01
+  seed:          42

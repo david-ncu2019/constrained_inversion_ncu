@@ -1,0 +1,651 @@
+.
+|-- LICENSE
+|-- README.md
+|-- __pycache__
+|   |-- cv_temporal_forward.cpython-310.pyc
+|   |-- cv_temporal_forward.cpython-312.pyc
+|   |-- stage2_gp_interpolation.cpython-310.pyc
+|   `-- stage2_gp_interpolation.cpython-312.pyc
+|-- configs
+|   |-- pipeline_config.ini
+|   |-- synthetic_challenge_config.ini
+|   `-- synthetic_config.ini
+|-- constrained_inversion_scripts_tree.txt
+|-- cv_spatial_gp.py
+|-- cv_temporal_forward.py
+|-- docs
+|   |-- GEMINI_HANDOFF.md
+|   |-- modification_log.md
+|   |-- modification_suggestions.md
+|   `-- verification_report.md
+|-- legacy
+|   |-- _20260323_WRONG_INPUT.rar
+|   |-- automated_runner.py
+|   |-- backup_v1
+|   |   |-- main.py
+|   |   `-- src
+|   |       |-- __init__.py
+|   |       |-- __pycache__
+|   |       |   |-- __init__.cpython-312.pyc
+|   |       |   |-- config.cpython-312.pyc
+|   |       |   |-- solvers.cpython-312.pyc
+|   |       |   |-- synthetic.cpython-312.pyc
+|   |       |   |-- system.cpython-312.pyc
+|   |       |   `-- visualize.cpython-312.pyc
+|   |       |-- config.py
+|   |       |-- solvers.py
+|   |       |-- synthetic.py
+|   |       |-- system.py
+|   |       `-- visualize.py
+|   |-- backup_v2
+|   |   |-- main.py
+|   |   |-- main_enhanced.py
+|   |   `-- src
+|   |       |-- __init__.py
+|   |       |-- __pycache__
+|   |       |   |-- __init__.cpython-312.pyc
+|   |       |   |-- config.cpython-312.pyc
+|   |       |   |-- solvers.cpython-312.pyc
+|   |       |   |-- synthetic.cpython-312.pyc
+|   |       |   |-- system.cpython-312.pyc
+|   |       |   `-- visualize.cpython-312.pyc
+|   |       |-- config.py
+|   |       |-- solvers.py
+|   |       |-- synthetic.py
+|   |       |-- system.py
+|   |       `-- visualize.py
+|   |-- backup_v3
+|   |   |-- main.py
+|   |   |-- main_enhanced.py
+|   |   |-- main_scalable.py
+|   |   `-- src
+|   |       |-- __init__.py
+|   |       |-- __pycache__
+|   |       |   |-- __init__.cpython-312.pyc
+|   |       |   |-- config.cpython-312.pyc
+|   |       |   |-- scalable_solvers.cpython-312.pyc
+|   |       |   |-- solvers.cpython-312.pyc
+|   |       |   |-- synthetic.cpython-312.pyc
+|   |       |   |-- system.cpython-312.pyc
+|   |       |   `-- visualize.cpython-312.pyc
+|   |       |-- config.py
+|   |       |-- scalable_solvers.py
+|   |       |-- solvers.py
+|   |       |-- synthetic.py
+|   |       |-- system.py
+|   |       `-- visualize.py
+|   |-- backup_v4
+|   |   |-- main_temporal.py
+|   |   |-- src
+|   |   |   |-- config.py
+|   |   |   |-- solvers_temporal.py
+|   |   |   |-- system.py
+|   |   |   `-- visualize_temporal.py
+|   |   `-- test_system.py
+|   |-- backup_v5
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |   |-- __init__.cpython-312.pyc
+|   |   |   |-- config.cpython-312.pyc
+|   |   |   |-- scalable_solvers.cpython-312.pyc
+|   |   |   |-- solvers.cpython-312.pyc
+|   |   |   |-- solvers_temporal.cpython-312.pyc
+|   |   |   |-- synthetic.cpython-312.pyc
+|   |   |   |-- synthetic_temporal.cpython-312.pyc
+|   |   |   |-- system.cpython-312.pyc
+|   |   |   |-- system_temporal.cpython-312.pyc
+|   |   |   |-- visualize.cpython-312.pyc
+|   |   |   `-- visualize_temporal.cpython-312.pyc
+|   |   |-- config.py
+|   |   |-- scalable_solvers.py
+|   |   |-- solvers.py
+|   |   |-- solvers_temporal.py
+|   |   |-- synthetic.py
+|   |   |-- synthetic_temporal.py
+|   |   |-- system.py
+|   |   |-- system_temporal.py
+|   |   |-- visualize.py
+|   |   `-- visualize_temporal.py
+|   |-- main.py
+|   |-- main_enhanced.py
+|   |-- main_scalable.py
+|   |-- main_temporal.py
+|   `-- sample_input
+|       |-- README.md
+|       |-- config_real_domain.json
+|       |-- config_toy.json
+|       |-- insar_observations_toy.csv
+|       |-- well_observations_note.md
+|       `-- well_observations_toy.csv
+|-- main_real.py
+|-- my_input_data
+|   |-- CSV_files
+|   |   |-- ANHE_insar_mlcw.csv
+|   |   |-- ANNAN_insar_mlcw.csv
+|   |   |-- BEICHEN_insar_mlcw.csv
+|   |   |-- CANLIN_insar_mlcw.csv
+|   |   |-- DONGGUANG_insar_mlcw.csv
+|   |   |-- DONGSHI_insar_mlcw.csv
+|   |   |-- ERLUN_insar_mlcw.csv
+|   |   |-- FENGAN_insar_mlcw.csv
+|   |   |-- FENGRONG_insar_mlcw.csv
+|   |   |-- GUANGFU_insar_mlcw.csv
+|   |   |-- HAIFENG_insar_mlcw.csv
+|   |   |-- HONGLUN_insar_mlcw.csv
+|   |   |-- HUNAN_insar_mlcw.csv
+|   |   |-- HUWEI_insar_mlcw.csv
+|   |   |-- JIANYANG_insar_mlcw.csv
+|   |   |-- JIAXING_insar_mlcw.csv
+|   |   |-- JINHU_XIN_insar_mlcw.csv
+|   |   |-- JIUZHUANG_insar_mlcw.csv
+|   |   |-- KECUO_insar_mlcw.csv
+|   |   |-- LONGYAN_insar_mlcw.csv
+|   |   |-- LUNFENG_XIN_insar_mlcw.csv
+|   |   |-- NANGUANG_insar_mlcw.csv
+|   |   |-- NEILIAO_insar_mlcw.csv
+|   |   |-- QIAOYI_insar_mlcw.csv
+|   |   |-- TANQIFENXIAO_insar_mlcw.csv
+|   |   |-- TUKU_insar_mlcw.csv
+|   |   |-- XIGANG_insar_mlcw.csv
+|   |   |-- XINGHUA_insar_mlcw.csv
+|   |   |-- XINJIE_insar_mlcw.csv
+|   |   |-- XINPI_insar_mlcw.csv
+|   |   |-- XINSHENG_insar_mlcw.csv
+|   |   |-- XINXING_insar_mlcw.csv
+|   |   |-- XIUTAN_insar_mlcw.csv
+|   |   |-- XIZHOU_insar_mlcw.csv
+|   |   |-- YIWU_insar_mlcw.csv
+|   |   |-- YUANCHANG_insar_mlcw.csv
+|   |   |-- ZHENGMIN_insar_mlcw.csv
+|   |   |-- ZHENNAN_insar_mlcw.csv
+|   |   `-- ZHUTANG_insar_mlcw.csv
+|   |-- grid_pnt_CRFP_500m_vert_IDW_v1.nc
+|   `-- mlcw_station_coordinates.csv
+|-- my_input_data_synthetic
+|   |-- CSV_files
+|   |   |-- ST_CH_001_insar_mlcw.csv
+|   |   |-- ST_CH_002_insar_mlcw.csv
+|   |   |-- ST_CH_003_insar_mlcw.csv
+|   |   |-- ST_CH_004_insar_mlcw.csv
+|   |   |-- ST_CH_005_insar_mlcw.csv
+|   |   |-- ST_CH_006_insar_mlcw.csv
+|   |   |-- ST_CH_007_insar_mlcw.csv
+|   |   |-- ST_CH_008_insar_mlcw.csv
+|   |   |-- ST_CH_009_insar_mlcw.csv
+|   |   |-- ST_CH_010_insar_mlcw.csv
+|   |   |-- ST_CH_011_insar_mlcw.csv
+|   |   `-- ST_CH_012_insar_mlcw.csv
+|   |-- grid_pnt_datacube_500m.nc
+|   |-- mlcw_station_coordinates.csv
+|   |-- output_001
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |-- output_002
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |-- output_003
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |-- output_004
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |-- output_005
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |       |-- hyperparam_results_full.csv
+|   |       `-- hyperparam_summary_table.csv
+|   |-- output_006
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |       |-- hyperparam_results_full.csv
+|   |       `-- hyperparam_summary_table.csv
+|   |-- output_007
+|   |   |-- best_params.txt
+|   |   |-- cv_spatial_gp
+|   |   |   |-- loso_gp_predictions.npz
+|   |   |   |-- loso_per_layer.csv
+|   |   |   |-- loso_per_station.csv
+|   |   |   `-- loso_summary.txt
+|   |   |-- cv_temporal
+|   |   |   `-- plots
+|   |   |-- logs
+|   |   |   |-- stage1_tuning.log
+|   |   |   |-- stage2_inversion.log
+|   |   |   |-- stage3a_spatial_cv.log
+|   |   |   `-- stage3b_temporal_cv.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   |-- real_m_est.npz
+|   |   `-- tune_hyperparams
+|   |       |-- hyperparam_results_full.csv
+|   |       `-- hyperparam_summary_table.csv
+|   |-- output_008
+|   |   |-- best_params.txt
+|   |   |-- cv_spatial_gp
+|   |   |   |-- loso_gp_predictions.npz
+|   |   |   |-- loso_per_layer.csv
+|   |   |   |-- loso_per_station.csv
+|   |   |   `-- loso_summary.txt
+|   |   |-- cv_temporal
+|   |   |   |-- plots
+|   |   |   |   |-- fold1_station_ST_CH_001.png
+|   |   |   |   |-- fold1_station_ST_CH_002.png
+|   |   |   |   |-- fold1_station_ST_CH_003.png
+|   |   |   |   |-- fold1_station_ST_CH_004.png
+|   |   |   |   |-- fold1_station_ST_CH_005.png
+|   |   |   |   |-- fold1_station_ST_CH_006.png
+|   |   |   |   |-- fold1_station_ST_CH_007.png
+|   |   |   |   |-- fold1_station_ST_CH_008.png
+|   |   |   |   |-- fold1_station_ST_CH_009.png
+|   |   |   |   |-- fold1_station_ST_CH_010.png
+|   |   |   |   |-- fold1_station_ST_CH_011.png
+|   |   |   |   |-- fold1_station_ST_CH_012.png
+|   |   |   |   |-- fold2_station_ST_CH_001.png
+|   |   |   |   |-- fold2_station_ST_CH_002.png
+|   |   |   |   |-- fold2_station_ST_CH_003.png
+|   |   |   |   |-- fold2_station_ST_CH_004.png
+|   |   |   |   |-- fold2_station_ST_CH_005.png
+|   |   |   |   |-- fold2_station_ST_CH_006.png
+|   |   |   |   |-- fold2_station_ST_CH_007.png
+|   |   |   |   |-- fold2_station_ST_CH_008.png
+|   |   |   |   |-- fold2_station_ST_CH_009.png
+|   |   |   |   |-- fold2_station_ST_CH_010.png
+|   |   |   |   |-- fold2_station_ST_CH_011.png
+|   |   |   |   |-- fold2_station_ST_CH_012.png
+|   |   |   |   |-- fold3_station_ST_CH_001.png
+|   |   |   |   |-- fold3_station_ST_CH_002.png
+|   |   |   |   |-- fold3_station_ST_CH_003.png
+|   |   |   |   |-- fold3_station_ST_CH_004.png
+|   |   |   |   |-- fold3_station_ST_CH_005.png
+|   |   |   |   |-- fold3_station_ST_CH_006.png
+|   |   |   |   |-- fold3_station_ST_CH_007.png
+|   |   |   |   |-- fold3_station_ST_CH_008.png
+|   |   |   |   |-- fold3_station_ST_CH_009.png
+|   |   |   |   |-- fold3_station_ST_CH_010.png
+|   |   |   |   |-- fold3_station_ST_CH_011.png
+|   |   |   |   `-- fold3_station_ST_CH_012.png
+|   |   |   |-- temporal_cv_arrays.npz
+|   |   |   |-- temporal_cv_per_layer.csv
+|   |   |   |-- temporal_cv_per_station_layer.csv
+|   |   |   `-- temporal_cv_summary.csv
+|   |   |-- logs
+|   |   |   |-- stage1_tuning.log
+|   |   |   |-- stage2_inversion.log
+|   |   |   |-- stage3a_spatial_cv.log
+|   |   |   |-- stage3b_temporal_cv.log
+|   |   |   `-- stage4_gp_expansion.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   |-- real_m_est.npz
+|   |   `-- tune_hyperparams
+|   |       |-- hyperparam_results_full.csv
+|   |       `-- hyperparam_summary_table.csv
+|   |-- output_009
+|   |   |-- best_params.txt
+|   |   |-- cv_spatial_gp
+|   |   |   |-- loso_gp_predictions.npz
+|   |   |   |-- loso_per_layer.csv
+|   |   |   |-- loso_per_station.csv
+|   |   |   `-- loso_summary.txt
+|   |   |-- cv_temporal
+|   |   |   |-- plots
+|   |   |   |   |-- fold1_station_ST_CH_001.png
+|   |   |   |   |-- fold1_station_ST_CH_002.png
+|   |   |   |   |-- fold1_station_ST_CH_003.png
+|   |   |   |   |-- fold1_station_ST_CH_004.png
+|   |   |   |   |-- fold1_station_ST_CH_005.png
+|   |   |   |   |-- fold1_station_ST_CH_006.png
+|   |   |   |   |-- fold1_station_ST_CH_007.png
+|   |   |   |   |-- fold1_station_ST_CH_008.png
+|   |   |   |   |-- fold1_station_ST_CH_009.png
+|   |   |   |   |-- fold1_station_ST_CH_010.png
+|   |   |   |   |-- fold1_station_ST_CH_011.png
+|   |   |   |   |-- fold1_station_ST_CH_012.png
+|   |   |   |   |-- fold2_station_ST_CH_001.png
+|   |   |   |   |-- fold2_station_ST_CH_002.png
+|   |   |   |   |-- fold2_station_ST_CH_003.png
+|   |   |   |   |-- fold2_station_ST_CH_004.png
+|   |   |   |   |-- fold2_station_ST_CH_005.png
+|   |   |   |   |-- fold2_station_ST_CH_006.png
+|   |   |   |   |-- fold2_station_ST_CH_007.png
+|   |   |   |   |-- fold2_station_ST_CH_008.png
+|   |   |   |   |-- fold2_station_ST_CH_009.png
+|   |   |   |   |-- fold2_station_ST_CH_010.png
+|   |   |   |   |-- fold2_station_ST_CH_011.png
+|   |   |   |   |-- fold2_station_ST_CH_012.png
+|   |   |   |   |-- fold3_station_ST_CH_001.png
+|   |   |   |   |-- fold3_station_ST_CH_002.png
+|   |   |   |   |-- fold3_station_ST_CH_003.png
+|   |   |   |   |-- fold3_station_ST_CH_004.png
+|   |   |   |   |-- fold3_station_ST_CH_005.png
+|   |   |   |   |-- fold3_station_ST_CH_006.png
+|   |   |   |   |-- fold3_station_ST_CH_007.png
+|   |   |   |   |-- fold3_station_ST_CH_008.png
+|   |   |   |   |-- fold3_station_ST_CH_009.png
+|   |   |   |   |-- fold3_station_ST_CH_010.png
+|   |   |   |   |-- fold3_station_ST_CH_011.png
+|   |   |   |   `-- fold3_station_ST_CH_012.png
+|   |   |   |-- temporal_cv_arrays.npz
+|   |   |   |-- temporal_cv_per_layer.csv
+|   |   |   |-- temporal_cv_per_station_layer.csv
+|   |   |   `-- temporal_cv_summary.csv
+|   |   |-- depth_weights_gp_grid.nc
+|   |   |-- logs
+|   |   |   |-- stage1_tuning.log
+|   |   |   |-- stage2_inversion.log
+|   |   |   |-- stage3a_spatial_cv.log
+|   |   |   |-- stage3b_temporal_cv.log
+|   |   |   `-- stage4_gp_expansion.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   |-- pipeline_summary.txt
+|   |   |-- real_m_est.npz
+|   |   `-- tune_hyperparams
+|   |       |-- hyperparam_results_full.csv
+|   |       `-- hyperparam_summary_table.csv
+|   |-- output_010
+|   |   |-- best_params.txt
+|   |   |-- cv_spatial_gp
+|   |   |   |-- loso_gp_predictions.npz
+|   |   |   |-- loso_per_layer.csv
+|   |   |   |-- loso_per_station.csv
+|   |   |   `-- loso_summary.txt
+|   |   |-- cv_temporal
+|   |   |   |-- plots
+|   |   |   |   |-- fold1_station_ST_CH_001.png
+|   |   |   |   |-- fold1_station_ST_CH_002.png
+|   |   |   |   |-- fold1_station_ST_CH_003.png
+|   |   |   |   |-- fold1_station_ST_CH_004.png
+|   |   |   |   |-- fold1_station_ST_CH_005.png
+|   |   |   |   |-- fold1_station_ST_CH_006.png
+|   |   |   |   |-- fold1_station_ST_CH_007.png
+|   |   |   |   |-- fold1_station_ST_CH_008.png
+|   |   |   |   |-- fold1_station_ST_CH_009.png
+|   |   |   |   |-- fold1_station_ST_CH_010.png
+|   |   |   |   |-- fold1_station_ST_CH_011.png
+|   |   |   |   |-- fold1_station_ST_CH_012.png
+|   |   |   |   |-- fold2_station_ST_CH_001.png
+|   |   |   |   |-- fold2_station_ST_CH_002.png
+|   |   |   |   |-- fold2_station_ST_CH_003.png
+|   |   |   |   |-- fold2_station_ST_CH_004.png
+|   |   |   |   |-- fold2_station_ST_CH_005.png
+|   |   |   |   |-- fold2_station_ST_CH_006.png
+|   |   |   |   |-- fold2_station_ST_CH_007.png
+|   |   |   |   |-- fold2_station_ST_CH_008.png
+|   |   |   |   |-- fold2_station_ST_CH_009.png
+|   |   |   |   |-- fold2_station_ST_CH_010.png
+|   |   |   |   |-- fold2_station_ST_CH_011.png
+|   |   |   |   |-- fold2_station_ST_CH_012.png
+|   |   |   |   |-- fold3_station_ST_CH_001.png
+|   |   |   |   |-- fold3_station_ST_CH_002.png
+|   |   |   |   |-- fold3_station_ST_CH_003.png
+|   |   |   |   |-- fold3_station_ST_CH_004.png
+|   |   |   |   |-- fold3_station_ST_CH_005.png
+|   |   |   |   |-- fold3_station_ST_CH_006.png
+|   |   |   |   |-- fold3_station_ST_CH_007.png
+|   |   |   |   |-- fold3_station_ST_CH_008.png
+|   |   |   |   |-- fold3_station_ST_CH_009.png
+|   |   |   |   |-- fold3_station_ST_CH_010.png
+|   |   |   |   |-- fold3_station_ST_CH_011.png
+|   |   |   |   `-- fold3_station_ST_CH_012.png
+|   |   |   |-- temporal_cv_arrays.npz
+|   |   |   |-- temporal_cv_per_layer.csv
+|   |   |   |-- temporal_cv_per_station_layer.csv
+|   |   |   `-- temporal_cv_summary.csv
+|   |   |-- depth_weights_gp_grid.nc
+|   |   |-- logs
+|   |   |   |-- stage1_tuning.log
+|   |   |   |-- stage2_inversion.log
+|   |   |   |-- stage3a_spatial_cv.log
+|   |   |   |-- stage3b_temporal_cv.log
+|   |   |   `-- stage4_gp_expansion.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   |-- pipeline_summary.txt
+|   |   |-- real_m_est.npz
+|   |   `-- tune_hyperparams
+|   |       |-- hyperparam_results_full.csv
+|   |       `-- hyperparam_summary_table.csv
+|   |-- output_011
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |-- output_012
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |-- output_013
+|   |   |-- cv_spatial_gp
+|   |   |-- cv_temporal
+|   |   |-- logs
+|   |   |   `-- stage1_tuning.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   `-- tune_hyperparams
+|   |-- output_014
+|   |   |-- best_params.txt
+|   |   |-- cv_spatial_gp
+|   |   |   |-- loso_gp_predictions.npz
+|   |   |   |-- loso_per_layer.csv
+|   |   |   |-- loso_per_station.csv
+|   |   |   `-- loso_summary.txt
+|   |   |-- cv_temporal
+|   |   |   |-- plots
+|   |   |   |   |-- fold1_station_ST_CH_001.png
+|   |   |   |   |-- fold1_station_ST_CH_002.png
+|   |   |   |   |-- fold1_station_ST_CH_003.png
+|   |   |   |   |-- fold1_station_ST_CH_004.png
+|   |   |   |   |-- fold1_station_ST_CH_005.png
+|   |   |   |   |-- fold1_station_ST_CH_006.png
+|   |   |   |   |-- fold1_station_ST_CH_007.png
+|   |   |   |   |-- fold1_station_ST_CH_008.png
+|   |   |   |   |-- fold1_station_ST_CH_009.png
+|   |   |   |   |-- fold1_station_ST_CH_010.png
+|   |   |   |   |-- fold1_station_ST_CH_011.png
+|   |   |   |   |-- fold1_station_ST_CH_012.png
+|   |   |   |   |-- fold2_station_ST_CH_001.png
+|   |   |   |   |-- fold2_station_ST_CH_002.png
+|   |   |   |   |-- fold2_station_ST_CH_003.png
+|   |   |   |   |-- fold2_station_ST_CH_004.png
+|   |   |   |   |-- fold2_station_ST_CH_005.png
+|   |   |   |   |-- fold2_station_ST_CH_006.png
+|   |   |   |   |-- fold2_station_ST_CH_007.png
+|   |   |   |   |-- fold2_station_ST_CH_008.png
+|   |   |   |   |-- fold2_station_ST_CH_009.png
+|   |   |   |   |-- fold2_station_ST_CH_010.png
+|   |   |   |   |-- fold2_station_ST_CH_011.png
+|   |   |   |   |-- fold2_station_ST_CH_012.png
+|   |   |   |   |-- fold3_station_ST_CH_001.png
+|   |   |   |   |-- fold3_station_ST_CH_002.png
+|   |   |   |   |-- fold3_station_ST_CH_003.png
+|   |   |   |   |-- fold3_station_ST_CH_004.png
+|   |   |   |   |-- fold3_station_ST_CH_005.png
+|   |   |   |   |-- fold3_station_ST_CH_006.png
+|   |   |   |   |-- fold3_station_ST_CH_007.png
+|   |   |   |   |-- fold3_station_ST_CH_008.png
+|   |   |   |   |-- fold3_station_ST_CH_009.png
+|   |   |   |   |-- fold3_station_ST_CH_010.png
+|   |   |   |   |-- fold3_station_ST_CH_011.png
+|   |   |   |   `-- fold3_station_ST_CH_012.png
+|   |   |   |-- temporal_cv_arrays.npz
+|   |   |   |-- temporal_cv_per_layer.csv
+|   |   |   |-- temporal_cv_per_station_layer.csv
+|   |   |   `-- temporal_cv_summary.csv
+|   |   |-- depth_weights_gp_grid.nc
+|   |   |-- logs
+|   |   |   |-- stage1_tuning.log
+|   |   |   |-- stage2_inversion.log
+|   |   |   |-- stage3a_spatial_cv.log
+|   |   |   |-- stage3b_temporal_cv.log
+|   |   |   `-- stage4_gp_expansion.log
+|   |   |-- pipeline.log
+|   |   |-- pipeline_config.ini
+|   |   |-- pipeline_summary.txt
+|   |   |-- real_m_est.npz
+|   |   `-- tune_hyperparams
+|   |       |-- hyperparam_results_full.csv
+|   |       `-- hyperparam_summary_table.csv
+|   `-- output_015
+|       |-- best_params.txt
+|       |-- cv_spatial_gp
+|       |   |-- loso_gp_predictions.npz
+|       |   |-- loso_per_layer.csv
+|       |   |-- loso_per_station.csv
+|       |   `-- loso_summary.txt
+|       |-- cv_temporal
+|       |   |-- plots
+|       |   |   |-- fold1_station_ST_CH_001.png
+|       |   |   |-- fold1_station_ST_CH_002.png
+|       |   |   |-- fold1_station_ST_CH_003.png
+|       |   |   |-- fold1_station_ST_CH_004.png
+|       |   |   |-- fold1_station_ST_CH_005.png
+|       |   |   |-- fold1_station_ST_CH_006.png
+|       |   |   |-- fold1_station_ST_CH_007.png
+|       |   |   |-- fold1_station_ST_CH_008.png
+|       |   |   |-- fold1_station_ST_CH_009.png
+|       |   |   |-- fold1_station_ST_CH_010.png
+|       |   |   |-- fold1_station_ST_CH_011.png
+|       |   |   |-- fold1_station_ST_CH_012.png
+|       |   |   |-- fold2_station_ST_CH_001.png
+|       |   |   |-- fold2_station_ST_CH_002.png
+|       |   |   |-- fold2_station_ST_CH_003.png
+|       |   |   |-- fold2_station_ST_CH_004.png
+|       |   |   |-- fold2_station_ST_CH_005.png
+|       |   |   |-- fold2_station_ST_CH_006.png
+|       |   |   |-- fold2_station_ST_CH_007.png
+|       |   |   |-- fold2_station_ST_CH_008.png
+|       |   |   |-- fold2_station_ST_CH_009.png
+|       |   |   |-- fold2_station_ST_CH_010.png
+|       |   |   |-- fold2_station_ST_CH_011.png
+|       |   |   |-- fold2_station_ST_CH_012.png
+|       |   |   |-- fold3_station_ST_CH_001.png
+|       |   |   |-- fold3_station_ST_CH_002.png
+|       |   |   |-- fold3_station_ST_CH_003.png
+|       |   |   |-- fold3_station_ST_CH_004.png
+|       |   |   |-- fold3_station_ST_CH_005.png
+|       |   |   |-- fold3_station_ST_CH_006.png
+|       |   |   |-- fold3_station_ST_CH_007.png
+|       |   |   |-- fold3_station_ST_CH_008.png
+|       |   |   |-- fold3_station_ST_CH_009.png
+|       |   |   |-- fold3_station_ST_CH_010.png
+|       |   |   |-- fold3_station_ST_CH_011.png
+|       |   |   `-- fold3_station_ST_CH_012.png
+|       |   |-- temporal_cv_arrays.npz
+|       |   |-- temporal_cv_per_layer.csv
+|       |   |-- temporal_cv_per_station_layer.csv
+|       |   `-- temporal_cv_summary.csv
+|       |-- depth_weights_gp_grid.nc
+|       |-- logs
+|       |   |-- stage1_tuning.log
+|       |   |-- stage2_inversion.log
+|       |   |-- stage3a_spatial_cv.log
+|       |   |-- stage3b_temporal_cv.log
+|       |   `-- stage4_gp_expansion.log
+|       |-- pipeline.log
+|       |-- pipeline_config.ini
+|       |-- pipeline_summary.txt
+|       |-- real_m_est.npz
+|       `-- tune_hyperparams
+|           |-- hyperparam_results_full.csv
+|           `-- hyperparam_summary_table.csv
+|-- pyproject.toml
+|-- run_pipeline.py
+|-- src
+|   |-- __init__.py
+|   |-- __pycache__
+|   |   |-- __init__.cpython-310.pyc
+|   |   |-- __init__.cpython-312.pyc
+|   |   |-- config.cpython-310.pyc
+|   |   |-- config.cpython-312.pyc
+|   |   |-- loader.cpython-310.pyc
+|   |   |-- loader.cpython-312.pyc
+|   |   |-- scalable_solvers.cpython-312.pyc
+|   |   |-- solvers.cpython-312.pyc
+|   |   |-- solvers_temporal.cpython-310.pyc
+|   |   |-- solvers_temporal.cpython-312.pyc
+|   |   |-- synthetic.cpython-312.pyc
+|   |   |-- synthetic_temporal.cpython-312.pyc
+|   |   |-- system.cpython-310.pyc
+|   |   |-- system.cpython-312.pyc
+|   |   |-- system_temporal.cpython-310.pyc
+|   |   |-- system_temporal.cpython-312.pyc
+|   |   |-- visualize.cpython-312.pyc
+|   |   `-- visualize_temporal.cpython-312.pyc
+|   |-- config.py
+|   |-- loader.py
+|   |-- scalable_solvers.py
+|   |-- solvers.py
+|   |-- solvers_temporal.py
+|   |-- synthetic.py
+|   |-- synthetic_temporal.py
+|   |-- system.py
+|   |-- system_temporal.py
+|   |-- visualize.py
+|   `-- visualize_temporal.py
+|-- stage2_gp_interpolation.py
+|-- tests
+|   |-- __init__.py
+|   |-- __pycache__
+|   |   |-- __init__.cpython-312.pyc
+|   |   |-- test_loader.cpython-312-pytest-9.0.2.pyc
+|   |   |-- test_scalable.cpython-312-pytest-9.0.2.pyc
+|   |   |-- test_solvers.cpython-312-pytest-9.0.2.pyc
+|   |   |-- test_synthetic.cpython-312-pytest-9.0.2.pyc
+|   |   `-- test_system.cpython-312-pytest-9.0.2.pyc
+|   |-- test_loader.py
+|   |-- test_scalable.py
+|   |-- test_solvers.py
+|   |-- test_synthetic.py
+|   `-- test_system.py
+|-- tools
+|   |-- evaluate_uncertainty.py
+|   |-- inspect_mlcw_vs_insar.py
+|   |-- plot_uncertainty_demo.py
+|   `-- scratch
+|       |-- verify_fix.py
+|       |-- verify_synthetic_results.py
+|       |-- verify_synthetic_timeseries.py
+|       `-- verify_total_compaction.py
+|-- tune_hyperparams.py
+|-- uv.lock
+`-- visualise_results.py
+
+109 directories, 539 files

@@ -130,10 +130,18 @@ def compute_depth_weights(
     depth_weights : np.ndarray, shape (n_stations, n_layers)
     """
     m_est = m_flat.reshape(n_epochs, n_stations, n_layers)
-    cumulative = m_est.sum(axis=0)                                    # (n_stations, n_layers)
-    insar_cum = d_insar_flat.reshape(n_epochs, n_stations).sum(axis=0)  # (n_stations,)
+    # Since run_training_fold uses cumulate=True, the last epoch is the total cumulative sum
+    cumulative = m_est[-1, :, :]                                        # (n_stations, n_layers)
+    insar_cum = d_insar_flat.reshape(n_epochs, n_stations)[-1, :]       # (n_stations,)
     insar_safe = np.where(insar_cum > 0, insar_cum, 1.0)
-    return cumulative / insar_safe[:, np.newaxis]
+    depth_weights = cumulative / insar_safe[:, np.newaxis]
+    
+    # Enforce strict upper bound on depth weights (sum <= 0.99)
+    total_weights = depth_weights.sum(axis=1, keepdims=True)
+    scale_factors = np.where(total_weights > 0.99, 0.99 / np.maximum(total_weights, 1e-9), 1.0)
+    depth_weights = depth_weights * scale_factors
+    
+    return depth_weights
 
 
 def run_training_fold(

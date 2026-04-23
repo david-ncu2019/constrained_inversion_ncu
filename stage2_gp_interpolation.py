@@ -254,6 +254,7 @@ def fit_spatial_model_per_layer(
     k_trials: int = 50,
     k_splits: int = 5,
     diag_dir: Optional[Path] = None,
+    show_progress: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, List[Dict[str, Any]]]:
     """
     Fit independent GPs for each depth layer and predict at grid pixels.
@@ -291,7 +292,7 @@ def fit_spatial_model_per_layer(
     anisotropy_params = []
 
     method_label = "Kriging" if interp_mode == "kriging" else "GP"
-    for l in tqdm(range(n_layers), desc=f"{method_label} fitting per layer", unit="layer"):
+    for l in tqdm(range(n_layers), desc=f"{method_label} fitting per layer", unit="layer", disable=not show_progress):
         y_train = depth_weights[:, l]
 
         # Skip layers where all weights are zero (no compaction signal)
